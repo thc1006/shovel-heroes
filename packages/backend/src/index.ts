@@ -13,6 +13,7 @@ import { registerAnnouncementRoutes } from './routes/announcements.js';
 import { registerUserRoutes } from './routes/users.js';
 import { registerFunctionRoutes } from './routes/functions.js';
 import { registerLegacyRoutes } from './routes/legacy.js';
+import { registerVolunteersRoutes } from './routes/volunteers.js';
 import { initDb } from './lib/db-init.js';
 
 const app = Fastify({ logger: true });
@@ -32,6 +33,7 @@ await app.register(cors, { origin: true });
 registerDisasterAreaRoutes(app);
 registerGridRoutes(app);
 registerVolunteerRegistrationRoutes(app);
+registerVolunteersRoutes(app);
 registerSupplyDonationRoutes(app);
 registerGridDiscussionRoutes(app);
 registerAnnouncementRoutes(app);
