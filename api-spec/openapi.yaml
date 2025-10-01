@@ -274,6 +274,93 @@ components:
           description: 使用者電子郵件
           example: volunteer@example.org
       required: [id]
+    VolunteerStatus:
+      type: string
+      description: 志工報名狀態
+      enum: [pending, confirmed, arrived, completed, cancelled]
+      example: pending
+    VolunteerListItem:
+      type: object
+      description: 志工報名清單中每一筆資料 (結合報名 + 呈現所需欄位)
+      properties:
+        id:
+          $ref: '#/components/schemas/ID'
+        grid_id:
+          $ref: '#/components/schemas/ID'
+        user_id:
+          $ref: '#/components/schemas/ID'
+        volunteer_name:
+          type: string
+          description: 志工顯示名稱 (可能從使用者或表單輸入取得)
+          example: 張小強
+        volunteer_phone:
+          type: string
+          nullable: true
+          description: 志工電話號碼；若 `can_view_phone=false` 時後端可直接省略或回傳遮蔽版本
+          example: 0912-345-678
+        status:
+          $ref: '#/components/schemas/VolunteerStatus'
+        available_time:
+          type: string
+          nullable: true
+          description: 可服務時間文字描述
+          example: 10/3 上午或 10/4 全天
+        skills:
+          type: array
+          description: 自述技能 (字串列表)
+          items: { type: string }
+          example: [挖土機, 醫療志工]
+        equipment:
+          type: array
+          description: 可攜帶工具 (字串列表)
+          items: { type: string }
+          example: [鐵鏟, 手推車]
+        notes:
+          type: string
+          nullable: true
+          description: 其他備註
+          example: 需要協助調度交通
+        created_date:
+          type: string
+          format: date-time
+          description: 報名建立時間 (命名沿用前端使用字段; 與其他資源的 created_at 不同)
+          example: 2025-10-02T08:12:30Z
+      required: [id, grid_id, user_id, volunteer_name, status, created_date]
+    VolunteersListResponse:
+      type: object
+      description: 志工清單回應外層封裝
+      properties:
+        data:
+          type: array
+          description: 志工報名資料陣列
+          items:
+            $ref: '#/components/schemas/VolunteerListItem'
+        can_view_phone:
+          type: boolean
+          description: 是否允許前端顯示 `volunteer_phone`；由後端依角色授權判斷
+          example: true
+        total:
+          type: integer
+          description: 總筆數 (分頁時可用)
+          example: 128
+        status_counts:
+          type: object
+          description: 各狀態統計 (若 `include_counts=true` 或後端預設回傳)
+          properties:
+            pending: { type: integer, example: 12 }
+            confirmed: { type: integer, example: 34 }
+            arrived: { type: integer, example: 8 }
+            completed: { type: integer, example: 55 }
+            cancelled: { type: integer, example: 19 }
+        page:
+          type: integer
+          description: 目前頁碼 (可選, 若採用 page 模式)
+          example: 1
+        limit:
+          type: integer
+          description: 單頁筆數 (對應查詢參數)
+          example: 50
+      required: [data, can_view_phone]
     Error:
       type: object
       properties:
@@ -629,10 +716,36 @@ paths:
   /volunteers:
     get:
       summary: List volunteers
-      description: 取得志工概觀或公開欄位。
+      description: |
+        取得志工報名清單（整合報名與使用者呈現所需欄位）。
+        回傳封裝含 `data` 與 `can_view_phone` 供前端判斷是否顯示電話。
+        欄位 `created_date` 目前沿用前端既有命名；若要統一建議改為 `created_at` 並同步前端。
       tags: [Volunteers]
+      parameters:
+        - name: grid_id
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/ID' }
+          description: 過濾指定網格的志工
+        - name: status
+          in: query
+          required: false
+          schema: { $ref: '#/components/schemas/VolunteerStatus' }
+          description: 過濾指定狀態
+        - name: include_counts
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+          description: 是否回傳狀態統計 `status_counts`
+        - $ref: '#/components/parameters/PageLimit'
+        - $ref: '#/components/parameters/PageOffset'
       responses:
-        '200': { description: OK }
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VolunteersListResponse'
         '500': { $ref: '#/components/responses/InternalError' }
   /users:
     get:
