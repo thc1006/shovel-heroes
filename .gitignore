@@ -1,26 +1,153 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+derivatives/*
+.set
+.tsv
 
-node_modules
-dist
-dist-ssr
-*.local
+# C extensions
+*.so
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Environments
 .env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs
+.spyder-project
+.spyderproject
+.ropeproject
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Data files (too large for git)
+data/bids_raw/
+data/derivatives/processed/
+data/derivatives/features/*.csv
+data/derivatives/features/*.parquet
+data/derivatives/models/*.pkl
+data/derivatives/models/*.joblib
+
+# Large files
+*.edf
+*.bdf
+*.fif
+*.mat
+*.h5
+*.hdf5
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# CUDA/GPU
+*.cuda
+*.ptx
+
+# Reports (keep only templates and final reports)
+reports/figures/*.png
+reports/coverage_html/
+reports/*.html
+reports/cache/
+
+# Keep important reports
+!reports/FINAL_PROJECT_SUMMARY.md
+!reports/END_TO_END_VERIFICATION_REPORT.md
+!reports/run_log.md
+!reports/templates/
+
+# Claude/AI files
+.claude/
+claude-flow.cmd
+flow/
+
+# Version files
+=*
+CLAUDE.md
+.mcp.json
+.claude-flow/metrics/agent-metrics.json
+.hive-mind/hive.db-wal
+.hive-mind/hive.db
+.hive-mind/memory.db
+.hive-mind/config.json
+.hive-mind/hive.db-shm
+.hive-mind/README.md
+.hive-mind/config/workers.json
+memory/sessions/README.md
+memory/agents/README.md
+memory/claude-flow@alpha-data.json
+.swarm/memory.db
+.hive-mind/sessions/session-1759260346951-c5xieeczk-auto-save-1759260376964.json
+.hive-mind/config/queens.json
+.claude-flow/metrics/task-metrics.json
+docs/Electroencephalogram and Event-Related Potential in Mild Cognitive Impairment.pdf
+CHANGES
+README
+data/literature/figure_1.png
+data/literature/figure_3.png
+data/literature/figure_2.png
+.claude-flow/metrics/system-metrics.json
+.claude-flow/metrics/performance.json

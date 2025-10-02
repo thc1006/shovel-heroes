@@ -1,229 +1,159 @@
-# Shevel-Heros
+# Shovel Heroes — Secure Starter (Fastify + PostgreSQL + Vite/React)
 
-前端：Vite + React + Tailwind  
-後端：Fastify (Node.js) + PostgreSQL  
-API 規格：OpenAPI 3.1 (`api-spec/openapi.yaml`)
+> **重點**：**Base44 僅作為選配/過渡**（`VITE_USE_REST` = `false` 時停用）。預設採用**自建 REST 後端 + PostgreSQL RLS**，所有敏感資料留在私域。
 
-目前支援兩種模式：
-1. Base44 SDK (預設)
-2. 自建 REST Backend (`packages/backend`)：設定 `VITE_USE_REST=true`
+本腳手架聚焦：**OpenAPI 驅動開發、TDD、最小可觀測性**，並可一鍵在 VM 上以 **Nginx 反向代理** 整合前後端。
+
+## Stack
+- 前端：Vite + React + Tailwind
+- 後端：Fastify v5（Node 20+）+ PostgreSQL（Row-Level Security）
+- API：OpenAPI 3.2.0（`api-spec/openapi.yaml`）
+- 測試：Vitest + Supertest
+- 安全：Helmet、CORS 白名單、Rate Limit、JWT（之後可接 OIDC）
+- 可觀測：Pino 日誌（JSON），OpenTelemetry JS（可送到 OTEL Collector/外部 SaaS）
+- 開發郵件：MailHog（本地）
+
+## 快速開始（本機）
+```bash
+# 1) 安裝依賴
+npm install
+
+# 2) 啟動基礎設施（Postgres + MailHog）
+docker compose up -d db mailhog
+
+# 3) 產生/套用資料庫 schema（node-pg-migrate）
+npm run migrate:up
+
+# 4) 啟動後端
+npm run dev:api
+
+# 5) 另開終端啟動前端
+npm run dev:web
+```
+
+REST 模式（預設）環境：
+```
+VITE_USE_REST=true
+VITE_API_BASE=http://localhost:8787
+```
+
+- Frontend (Vite): 5173 (dev)
+- Backend (Fastify): 8787（開發遇衝突可遞增；**生產固定 8787**，由 Nginx 反代 `/api`）
+- PostgreSQL: 5432
+- MailHog: SMTP 1025 / UI 8025
 
 ---
 
-## 目錄結構概覽
-
+## 目錄
 ```
-api-spec/                # OpenAPI 規格與 bundle 輸出
+api-spec/                 # OpenAPI 3.2.0 規格
 packages/
-  backend/               # Fastify 後端
-  shared-types/          # OpenAPI 產出的共用 TS 型別
-src/                     # 前端 React 原始碼
+  backend/                # Fastify 後端（TypeScript）
+  shared-types/           # 由 OpenAPI 產出的 TS 型別（範例 stub）
+src/                      # 前端（Vite/React）
+infra/
+  nginx/                  # Nginx 反代設定（VM）
+.github/workflows/        # CI（lint/test/spectral/redocly）
+```
+
+## Build (prod)
+- 前端設 `VITE_API_BASE=/api`。
+- 部署 `infra/nginx/shovelheroes.conf`，執行 `scripts/deploy.sh`（Ubuntu）。
+- 使用 `certbot --nginx` 取得/續約憑證。
+
+## Security
+- JWT 驗證（@fastify/jwt）+ RBAC 守衛
+- PostgreSQL **Row-Level Security**（以 `SET LOCAL app.user_id` 傳遞身份）
+- 欄位遮罩：電話等 PII 僅 `can_view_phone` 時返回
+- Helmet / CORS 白名單 / Rate Limit
+- Audit Log 追加式寫入
+
+## OpenAPI
+- 以 `api-spec/openapi.yaml` 為單一真實來源（OAS 3.2）
+- `pnpm openapi:lint`（Spectral）
+- `pnpm openapi:preview`（Redocly 預覽）
+- `pnpm types:openapi` 產出共用 TS 型別
+
+## Tests
+- Vitest + Supertest：CRUD、授權、RLS 行為、速率限制
+- `scripts/smoke.sh`：本地/VM curl 驗證
+
+> 詳細提示詞與分階段 TDD 指令見 `claude-prompts.md`。
+
+---
+
+## 數位視覺化（Mermaid）
+
+### 系統整合（VM）
+```mermaid
+flowchart LR
+  subgraph Client[Browser]
+    UI[React App]
+  end
+
+  subgraph VM[Nginx on VM]
+    Nginx -->|/api/* proxy| API
+    Nginx -->|/ static| SPA[Static Files]
+  end
+
+  UI <-->|HTTPS| Nginx
+
+  subgraph Backend[Fastify API]
+    API[Fastify v5<br/>Helmet/CORS/RateLimit/JWT]
+    OTel[OpenTelemetry SDK]
+    Pino[Pino Logger]
+  end
+
+  Nginx -->|HTTP 8787| API
+  API -->|pg| PG[(PostgreSQL)]
+  API --> OTel
+  API --> Pino
+
+  subgraph DB[PostgreSQL]
+    PG -->|RLS Policies| Tables[(Tables)]
+    Audit[(Audit Log)] -.-> PG
+  end
+
+  subgraph Tools[Dev Tools]
+    MailHog[(MailHog SMTP)]
+  end
+
+  API -->|SMTP 1025| MailHog
+```
+
+### 請求流程（RLS）
+```mermaid
+sequenceDiagram
+  participant B as Browser
+  participant N as Nginx
+  participant A as Fastify API
+  participant DB as Postgres (RLS)
+  B->>N: HTTPS GET /api/grids?area=...
+  N->>A: Proxy, add X-Forwarded-For/Proto
+  A->>A: Verify Bearer JWT → user_id
+  A->>DB: SET app.user_id = :user_id; SELECT * FROM grids WHERE ...
+  DB-->>A: Rows filtered by RLS USING/WITH CHECK
+  A-->>N: 200 JSON
+  N-->>B: 200 JSON
 ```
 
 ---
 
-## 快速開始 (前端 + 後端)
-
-```bash
-npm install                 # 安裝依賴
-docker compose up -d db     # 啟動 Postgres (背景)
-npm run dev:api             # 啟動後端 (Fastify)
-npm run dev                 # 另開終端啟動前端
-```
-
-切換到 REST：建立 `.env` 或 `.env.local`：
-
-```
-VITE_USE_REST=true
-VITE_API_BASE=http://localhost:8787
-```
-
-> 後端若 8787 被占用會往上遞增（8788 / 8789 ...）請同步調整 `VITE_API_BASE`。
+## 開發流程（OpenAPI 驅動 + TDD）
+1. 修改 `api-spec/openapi.yaml` → `npm run openapi:lint` → `npm run openapi:preview`
+2. `npm run types:openapi` 產出型別
+3. 後端 route 實作 / 補測試（Vitest + Supertest）
+4. 前端串接（React Query/Fetch）
+5. CI 驗收（lint、test、spectral、redocly）
 
 ---
 
-## 後端環境變數
-
-根目錄或 `packages/backend/.env` 任一可被 dotenv 讀取：
-
-```
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/shovelheroes
-PORT=8787
-VITE_API_BASE=http://localhost:8787
-VITE_USE_REST=true
-```
-
-健康檢查：`GET /healthz` 回傳 `{ status, db }`。
+## Base44 為**選配/退場中**
+- 預設 `VITE_USE_REST=true` 走自建 REST
+- 如需過渡支援：切 `VITE_USE_REST=false`，以 `src/api/base44/*` 範例包裝（僅示意，未預設安裝）
 
 ---
 
-## Backend 結構
-
-```
-packages/backend/src/
-  index.ts                     # Fastify 啟動與 plugin 註冊
-  lib/
-    db.ts                      # pg 連線池 + decorator
-    db-init.ts                 # 啟動時建表 (暫代 migrations)
-  modules/
-    disaster-areas/repo.ts     # 資料層 (其餘資源暫於 routes 直接操作)
-  routes/
-    disaster-areas.ts
-    grids.ts
-    volunteer-registrations.ts
-    supply-donations.ts
-    grid-discussions.ts
-    announcements.ts
-    users.ts
-    functions.ts
-    legacy.ts
-```
-
-> 目前僅 `disaster-areas` 使用 repo pattern；其餘後續可抽出 service/repo 分層。
-
----
-
-## OpenAPI / 型別 / 文件
-
-規格檔：`api-spec/openapi.yaml`
-
-指令：
-```bash
-npm run openapi:lint      # Spectral 驗證
-npm run openapi:preview   # Redoc 預覽 (熱更新)
-npm run openapi:bundle    # 輸出 bundle 版
-npm run types:openapi     # 產生 TS 型別 → packages/shared-types/src/openapi.ts
-```
-
-引用方式：
-```ts
-import type { components } from 'shovel-shared-types/src/openapi';
-type Grid = components['schemas']['Grid'];
-```
-
----
-
-## REST 模式（取代 Base44 SDK）
-
-REST 實作檔：
-
-- `src/api/rest/client.js`
-- `src/api/rest/entities.js`
-- `src/api/rest/functions.js`
-- `src/api/rest/index.js` (依 `VITE_USE_REST` 切換)
-
-將：
-```ts
-import { Grid } from '@/api/entities';
-```
-改為：
-```ts
-import { Grid } from '@/api/rest';
-```
-即可使用自建後端。若 `VITE_USE_REST !== 'true'` 仍回退 Base44。
-
-> `functions.js` 若要完全移除 Base44 依賴，需再 re-export REST 實作。
-
----
-
-## 已實作 API 對照
-
-| 資源 | 動作 | 狀態 |
-|------|------|------|
-| disaster-areas | list/create/get/update/delete | Done |
-| grids | list/create/get/update/delete | Done |
-| volunteer-registrations | list/create/delete | Done |
-| supply-donations | list/create | Done |
-| grid-discussions | list/create | Done |
-| announcements | list/create | Done |
-| users | list | Done |
-| me | get | Done (stub auth) |
-| functions | csv export/import/template/fix/proxy | Done |
-| legacy | sync / roster | Done |
-| volunteers | list | Pending |
-
-尚未：`GET /volunteers`（需彙總 user + 報名統計）。
-
----
-
-## 後續改進建議 & 工作清單
-
-1. Pagination：套用 `limit/offset` 至所有 list endpoints。
-2. 統一錯誤：建立 `replyError(code,message,status)` 並對齊 OpenAPI `components.responses`。
-3. 權限 / bearerAuth：JWT parsing + role 授權中介層。
-4. Migrations：導入 `node-pg-migrate` / `drizzle`；移除啟動建表。
-5. OpenAPI 型別整合：減少手寫 Zod，或產生 Zod schema。
-6. CSV 匯入強化：錯誤報告 / 重複檢測 / UPSERT。
-7. Volunteers endpoint：JOIN volunteer_registrations + users，電話遮罩。
-8. 日誌 / Observability：request id、pino-pretty、OpenTelemetry。
-9. 安全：rate limit、Helmet、欄位長度限制、CORS 白名單。
-10. 測試：Vitest + supertest CRUD / 匯入匯出測試。
-
-TODO Snapshot:
-```
-- [ ] GET /volunteers
-- [ ] 分頁參數應用
-- [ ] 統一錯誤格式 middleware
-- [ ] JWT 驗證 / user context
-- [ ] Migration 系統導入
-- [ ] 型別對齊（OpenAPI → code）
-- [ ] CSV 匯入強化
-- [ ] 基本測試覆蓋
-```
-
----
-
-## Docker / 資料庫操作
-
-啟動：
-```bash
-docker compose up -d db
-```
-重置：
-```bash
-docker compose down -v && docker compose up -d db
-```
-
----
-
-## FAQ
-
-**Q: `DATABASE_URL not set`?**  
-A: 確認 `.env` 內容與位置，重啟後端。
-
-**Q: Port 被占用?**  
-A: 服務自動遞增；需固定 8787：`lsof -i :8787` 查 PID。
-
-**Q: /me 401?**  
-A: 加 `Authorization: Bearer anything` 目前 stub 回假資料。
-
-**Q: 重新產生型別?**  
-A: `npm run types:openapi`。
-
-**Q: 切換 REST 模式?**  
-A: `.env` 設 `VITE_USE_REST=true` 並設定 `VITE_API_BASE`。
-
----
-
-## Building the app (前端)
-
-```bash
-npm run build
-```
-
-輸出：`dist/`。後端可另建 Dockerfile 或 PM2 部署。
-
----
-
-## 開發流程建議
-1. 修改 `api-spec/openapi.yaml`
-2. `npm run openapi:lint`
-3. `npm run types:openapi`
-4. 實作 / 更新 backend routes
-5. 前端串接 / 驗證
-6. PR & CI (未來加入測試)
-
----
-
-For more information and support, please contact Base44 support at app@base44.com.
-
+## 授權
+MIT
+生成時間：2025-10-01T19:50:16.254674Z
