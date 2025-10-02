@@ -35,9 +35,10 @@ const app = Fastify({
 });
 
 // Security headers with Helmet
+// Note: HSTS is configured at CloudFlare level for better performance
 await app.register(helmet, {
   contentSecurityPolicy: isProduction() ? undefined : false, // Disable CSP in dev for easier debugging
-  hsts: isProduction() ? { maxAge: 31536000, includeSubDomains: true } : false,
+  hsts: false, // HSTS handled by CloudFlare
 });
 
 // CORS configuration with strict allowlist
