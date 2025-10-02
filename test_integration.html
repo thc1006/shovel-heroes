@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head><title>Integration Test</title></head>
+<body>
+<h1>Shovel Heroes - Frontend-Backend Integration Test</h1>
+<div id="results"></div>
+<script>
+async function testAPIs() {
+  const results = document.getElementById('results');
+  const apiBase = 'http://localhost:8787';
+  
+  // Test 1: Root endpoint
+  try {
+    const res1 = await fetch(apiBase + '/');
+    const data1 = await res1.json();
+    results.innerHTML += `<p>✅ Root API: ${JSON.stringify(data1)}</p>`;
+  } catch (e) {
+    results.innerHTML += `<p>❌ Root API failed: ${e.message}</p>`;
+  }
+  
+  // Test 2: Healthz
+  try {
+    const res2 = await fetch(apiBase + '/healthz');
+    const data2 = await res2.json();
+    results.innerHTML += `<p>✅ Health Check: ${JSON.stringify(data2)}</p>`;
+  } catch (e) {
+    results.innerHTML += `<p>❌ Health Check failed: ${e.message}</p>`;
+  }
+  
+  // Test 3: Grids API
+  try {
+    const res3 = await fetch(apiBase + '/grids');
+    const data3 = await res3.json();
+    results.innerHTML += `<p>✅ Grids API: Found ${data3.data?.length || 0} grids</p>`;
+  } catch (e) {
+    results.innerHTML += `<p>❌ Grids API failed: ${e.message}</p>`;
+  }
+}
+testAPIs();
+</script>
+</body>
+</html>

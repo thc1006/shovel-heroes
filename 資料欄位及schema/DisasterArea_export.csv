@@ -1,0 +1,86 @@
+name,township,county,center_lat,center_lng,bounds,grid_size,status,description,id,created_date,updated_date,created_by_id,created_by,is_sample
+¾©½å,¾©,±èç¸,23.6605,121.4225,"{""north"":23.6705,""south"":23.6505,""east"":121.4325,""west"":121.4125}",200,active,é¦¬å¤ª½ãç¥å¼·è·¯­¦ç­½å,68dd5b134d9b649333f2a360,2025-10-01T16:47:15.330000,2025-10-01T16:47:15.330000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+¬æ¦®å¡å½±é,¬æ¦®,±èç¸,23.715,121.41,"{""north"":23.725,""south"":23.705,""east"":121.42,""west"":121.4}",200,active,ä¸¸¸°åæ¹½±¿åå¯æ°´äè®,68dd5b134d9b649333f2a361,2025-10-01T16:47:15.330000,2025-10-01T16:47:15.330000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+é³³æ®æ·¤æ³¥å»¶ä¼¸å,é³³æ,±èç¸,23.745,121.445,"{""north"":23.755,""south"":23.735,""east"":121.455,""west"":121.435}",200,active,ä¸¸¸æ·¤æ³¥å»¶ä¼¸ä¸»èºè¾²°èä½æ¸,68dd5b134d9b649333f2a362,2025-10-01T16:47:15.330000,2025-10-01T16:47:15.330000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,
+"name
+(
+text
+, required
+)
+¨a°Ï¦WºÙ
+
+township
+(
+text
+, required
+)
+¶mÂí¦WºÙ
+
+county
+(
+text
+, required
+)
+¿¤¥«¦WºÙ
+
+center_lat
+(
+number
+, required
+)
+¤¤¤ß½n«×
+
+center_lng
+(
+number
+, required
+)
+¤¤¤ß¸g«×
+
+bounds
+(
+object
+)
+°Ï°ìÃä¬É
+
+north
+(
+number
+)
+south
+(
+number
+)
+east
+(
+number
+)
+west
+(
+number
+)
+grid_size
+(
+number
+)
+ºô®æ¤j¤p(¤½¤Ø)
+
+Default: 200
+status
+(
+text
+)
+¨a°Ïª¬ºA
+
+Default: ""active""
+Options: active, closed, preparing
+description
+(
+text
+)
+¨a°Ï´y­z",,,,,,,,,,,,,,

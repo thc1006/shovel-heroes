@@ -4,8 +4,10 @@ import { withConn } from '../lib/db.js';
 
 const CreateSchema = z.object({
   name: z.string().min(1),
-  center_lat: z.number().min(-90).max(90),
-  center_lng: z.number().min(-180).max(180)
+  description: z.string().optional(),
+  location: z.string().optional(),
+  severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  status: z.enum(['active', 'resolved', 'monitoring']).optional()
 });
 
 const UpdateSchema = CreateSchema.partial();
@@ -16,7 +18,7 @@ export function registerDisasterAreaRoutes(app: FastifyInstance) {
     try {
       const rows = await withConn(async (c) => {
         const { rows } = await c.query(
-          'SELECT id, name, center_lat, center_lng, created_at, updated_at FROM disaster_areas ORDER BY created_at DESC LIMIT 100'
+          'SELECT id, name, description, location, severity, status, created_at, updated_at FROM disaster_areas ORDER BY created_at DESC LIMIT 100'
         );
         return rows;
       });

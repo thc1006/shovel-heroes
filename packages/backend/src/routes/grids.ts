@@ -7,21 +7,26 @@ const qSchema = z.object({
 });
 
 export function registerGrids(app: FastifyInstance) {
-  app.get('/grids', { preHandler: [app.auth as any] }, async (req: any, reply) => {
+  // Public GET - list all grids (no auth required for public viewing)
+  app.get('/grids', async (req: any, reply) => {
     const parsed = qSchema.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: 'bad_request', detail: parsed.error.flatten() });
 
-    const userId = (req.user && (req.user as any).sub) || null;
     const rows = await withConn(async (c) => {
       const { rows } = await c.query(
-        `select id, name, area_id from grids
-         where ($1::text is null or area_id = $1) 
-         order by name limit 100`, 
+        `SELECT id, code, name, area_id, grid_type, status,
+                center_lat, center_lng, bounds,
+                volunteer_needed, volunteer_registered,
+                supplies_needed, meeting_point, description,
+                created_at, updated_at
+         FROM grids
+         WHERE ($1::text IS NULL OR area_id = $1)
+         ORDER BY code LIMIT 100`,
         [parsed.data.area_id ?? null]
       );
       return rows;
-    }, userId ?? undefined);
+    });
 
-    return { items: rows };
+    return rows;
   });
 }

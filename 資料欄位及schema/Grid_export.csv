@@ -1,0 +1,143 @@
+code,grid_type,disaster_area_id,center_lat,center_lng,bounds,volunteer_needed,volunteer_registered,supplies_needed,grid_manager_id,meeting_point,risks_notes,contact_info,status,completion_photo,id,created_date,updated_date,created_by_id,created_by,is_sample
+瘙⊥野怎蔭,mud_disposal,68d7d97f32d4040fdba931d7,23.65578188,121.4191684,"{""north"":23.656781876452403,""south"":23.6547818764524,""east"":121.42016841268541,""west"":121.4181684126854}",,,"[{""name"":""瘞"",""quantity"":6,""unit"":""蝞"",""received"":6}]",68d7d7b836364938a22cd52c,,,0972-223-415蝟脫格,open,,68dd5b4cf6dff118dc08f709,2025-10-01T16:48:12.388000,2025-10-02T01:24:35.327000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+勗頝18,manpower,68d7d97f32d4040fdba931d7,23.66779522,121.4656618,"{""north"":23.668795222641794,""south"":23.66679522264179,""east"":121.46666182374956,""west"":121.46466182374955}",20,6,[],68d7d7b836364938a22cd52c, 梯蝮敺拚勗頝30,"頝漱蝞∟牧閬嗉遣蝡
+敹極隢
+鋆嚗極雿憟摮
+芸楛折“抵嚗偌押蝵押蝎曄",93834890,open,,68dd5b4cf6dff118dc08f70a,2025-10-01T16:48:12.388000,2025-10-01T16:48:12.388000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,
+"code
+(
+text
+, required
+)
+網格代碼 (如 A-1, B-2)
+
+grid_type
+(
+text
+)
+網格類型：污泥暫置場、人力任務、物資停放處、住宿地點、領吃食區域
+
+Default: ""manpower""
+Options: mud_disposal, manpower, supply_storage, accommodation, food_area
+disaster_area_id
+(
+text
+, required
+)
+所屬災區ID
+
+center_lat
+(
+number
+, required
+)
+網格中心緯度
+
+center_lng
+(
+number
+, required
+)
+網格中心經度
+
+bounds
+(
+object
+)
+網格邊界座標
+
+north
+(
+number
+)
+south
+(
+number
+)
+east
+(
+number
+)
+west
+(
+number
+)
+volunteer_needed
+(
+number
+)
+需要志工人數
+
+Default: 0
+volunteer_registered
+(
+number
+)
+已報名志工人數
+
+Default: 0
+supplies_needed
+(
+array
+)
+需要物資清單
+
+name
+(
+text
+)
+quantity
+(
+number
+)
+unit
+(
+text
+)
+received
+(
+number
+)
+Default: 0
+grid_manager_id
+(
+text
+)
+格主用戶ID
+
+meeting_point
+(
+text
+)
+集合地點
+
+risks_notes
+(
+text
+)
+風險注意事項
+
+contact_info
+(
+text
+)
+聯絡資訊
+
+status
+(
+text
+)
+網格狀態
+
+Default: ""planning""
+Options: planning, open, in_progress, completed, closed
+completion_photo
+(
+text
+)
+完工照片URL",,,,,,,,,,,,,,,,,,,,

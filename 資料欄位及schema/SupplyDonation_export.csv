@@ -1,0 +1,86 @@
+grid_id,donor_name,donor_phone,donor_email,supply_name,quantity,delivery_method,delivery_address,delivery_time,status,received_photo,notes,id,created_date,updated_date,created_by_id,created_by,is_sample
+existing_grid_id_2,啁拇銝剖,089-1234567,logistics@example.com,靘輻,50,pickup_point,,銝10:00,confirmed,,蝝靘輻50,68dd5cea2448a49f79cc533c,2025-10-01T16:55:06.312000,2025-10-01T16:55:06.312000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+existing_grid_id_1,梯粹,03-9876543,charity@example.com,瘥秤,30,volunteer_pickup,梯撣楝456,隞7:00,delivered,,瘥30璇撌脤摰,68dd5cea2448a49f79cc533d,2025-10-01T16:55:06.312000,2025-10-01T16:55:06.312000,68d7d7b836364938a22cd52c,kuo.tanya@gmail.com,
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,
+"grid_id
+(
+text
+, required
+)
+網格ID
+
+donor_name
+(
+text
+, required
+)
+捐贈者姓名
+
+donor_phone
+(
+text
+, required
+)
+捐贈者電話
+
+donor_email
+(
+text
+)
+捐贈者信箱
+
+supply_name
+(
+text
+, required
+)
+物資名稱
+
+quantity
+(
+number
+, required
+)
+捐贈數量
+
+delivery_method
+(
+text
+)
+送達方式
+
+Options: direct, pickup_point, volunteer_pickup
+delivery_address
+(
+text
+)
+送達地址
+
+delivery_time
+(
+text
+)
+預計送達時間
+
+status
+(
+text
+)
+捐贈狀態
+
+Default: ""pledged""
+Options: pledged, confirmed, in_transit, delivered, cancelled
+received_photo
+(
+text
+)
+簽收照片URL
+
+notes
+(
+text
+)
+備註",,,,,,,,,,,,,,,,,

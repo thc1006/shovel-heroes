@@ -3,7 +3,7 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import jwt from '@fastify/jwt';
-import { env, validateEnv, isProduction } from './lib/env.js';
+import { env, validateEnv, isProduction, isDevelopment } from './lib/env.js';
 import { logger, logSecurityEvent } from './lib/logger.js';
 import { pool, closePool } from './lib/db.js';
 import { registerHealth } from './routes/healthz.js';
@@ -26,7 +26,19 @@ if (isProduction() && env.JWT_SECRET.includes('dev_secret')) {
 }
 
 const app = Fastify({
-  logger,
+  logger: {
+    level: env.LOG_LEVEL,
+    transport: isDevelopment()
+      ? {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            translateTime: 'SYS:HH:MM:ss',
+            ignore: 'pid,hostname',
+          },
+        }
+      : undefined,
+  },
   // Trust proxy headers (for rate limiting behind reverse proxy)
   trustProxy: isProduction(),
   // Request ID tracking
@@ -156,6 +168,9 @@ registerSupplyDonationRoutes(app as any);
 registerGridDiscussionRoutes(app as any);
 
 app.get('/', async () => ({ ok: true }));
+
+// Simple test endpoint without database
+app.get('/ping', async () => ({ pong: true, time: new Date().toISOString() }));
 
 // Graceful shutdown handler
 async function shutdown(signal: string) {

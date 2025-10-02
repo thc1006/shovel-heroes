@@ -4,16 +4,18 @@ import { withConn } from '../lib/db.js';
 
 const CreateSchema = z.object({
   title: z.string().min(1),
-  body: z.string().min(1)
+  content: z.string().min(1),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).optional(),
+  published: z.boolean().optional()
 });
 
 export function registerAnnouncementRoutes(app: FastifyInstance) {
-  // Public GET - list all announcements
+  // Public GET - list all published announcements
   app.get('/announcements', async (req, reply) => {
     try {
       const rows = await withConn(async (c) => {
         const { rows } = await c.query(
-          'SELECT id, title, body, created_at FROM announcements ORDER BY created_at DESC LIMIT 100'
+          'SELECT id, title, content, priority, created_at, updated_at FROM announcements WHERE published = true ORDER BY created_at DESC LIMIT 100'
         );
         return rows;
       });

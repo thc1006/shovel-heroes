@@ -1,0 +1,55 @@
+grid_id,author_name,author_role,message,message_type,photo_url,is_pinned,id,created_date,updated_date,created_by_id,created_by,is_sample
+68da0b817e1bb04f4ff21d73,kuo tanya,volunteer,隢曉犖仿敹極瘙閬嚗,info,,,68da11cc2a5558f52407d189,2025-09-29T04:57:48.661000,2025-09-29T04:57:48.661000,68d9407064fb4a85d687e201,tanya.ty.guo@gmail.com,
+68d92e29f105756fd08579ad,啣賢,volunteer,隢臭暻澆瑽,info,,,68da8393ae7e01f02fe2fcc7,2025-09-29T13:03:15.589000,2025-09-29T13:03:15.589000,anonymous,anonymous,
+,,,,,,,,,,,,
+,,,,,,,,,,,,
+,,,,,,,,,,,,
+"grid_id
+(
+text
+, required
+)
+網格ID
+
+author_name
+(
+text
+, required
+)
+發文者姓名
+
+author_role
+(
+text
+)
+發文者角色
+
+Options: admin, grid_manager, volunteer, donor
+message
+(
+text
+, required
+)
+訊息內容
+
+message_type
+(
+text
+)
+訊息類型
+
+Default: ""info""
+Options: info, question, update, alert
+photo_url
+(
+text
+)
+附加照片URL
+
+is_pinned
+(
+boolean
+)
+是否置頂
+
+Default: false",,,,,,,,,,,,
