@@ -1,68 +1,64 @@
-import 'dotenv/config';
 import Fastify from 'fastify';
+import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
-import swagger from '@fastify/swagger';
-import swaggerUI from '@fastify/swagger-ui';
+import rateLimit from '@fastify/rate-limit';
+import jwt from '@fastify/jwt';
+import { pool, withConn } from './lib/db.js';
+import { registerHealth } from './routes/healthz.js';
+import { registerGrids } from './routes/grids.js';
 
-import { registerDisasterAreaRoutes } from './routes/disaster-areas.js';
-import { registerGridRoutes } from './routes/grids.js';
-import { registerVolunteerRegistrationRoutes } from './routes/volunteer-registrations.js';
-import { registerSupplyDonationRoutes } from './routes/supply-donations.js';
-import { registerGridDiscussionRoutes } from './routes/grid-discussions.js';
-import { registerAnnouncementRoutes } from './routes/announcements.js';
-import { registerUserRoutes } from './routes/users.js';
-import { registerFunctionRoutes } from './routes/functions.js';
-import { registerLegacyRoutes } from './routes/legacy.js';
-import { registerVolunteersRoutes } from './routes/volunteers.js';
-import { initDb } from './lib/db-init.js';
+const PORT = Number(process.env.PORT || 8787);
+const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
-const app = Fastify({ logger: true });
-
-app.get('/healthz', async () => ({ status: 'ok', db: app.hasDecorator('db') ? 'ready' : 'not-ready' }));
-
-await initDb(app);
-
-await app.register(swagger, {
-  openapi: {
-    info: { title: 'Shovel Heroes Backend', version: '0.1.0' }
+const app = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL || 'info'
   }
 });
-await app.register(swaggerUI, { routePrefix: '/docs' });
-await app.register(cors, { origin: true });
 
-registerDisasterAreaRoutes(app);
-registerGridRoutes(app);
-registerVolunteerRegistrationRoutes(app);
-registerVolunteersRoutes(app);
-registerSupplyDonationRoutes(app);
-registerGridDiscussionRoutes(app);
-registerAnnouncementRoutes(app);
-registerUserRoutes(app);
-registerFunctionRoutes(app);
-registerLegacyRoutes(app);
-
-async function start() {
-  const basePort = Number(process.env.PORT) || 8787;
-  let port = basePort;
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      await app.listen({ port, host: '0.0.0.0' });
-      if (port !== basePort) {
-        app.log.warn(`Started on fallback port ${port} (base ${basePort} was busy)`);
-      }
-      return;
-    } catch (err: any) {
-      if (err && err.code === 'EADDRINUSE') {
-        app.log.warn(`Port ${port} in use, trying ${port + 1}`);
-        port++;
-        continue;
-      }
-      app.log.error(err, 'Failed to start server');
-      process.exit(1);
+await app.register(helmet);
+await app.register(cors, {
+  origin: (origin, cb) => {
+    // allow same-origin or explicit whitelist via env
+    const allowed = (process.env.CORS_ALLOWLIST || '').split(',').filter(Boolean);
+    if (!origin || allowed.length === 0 || allowed.includes(origin)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Not allowed by CORS'), false);
     }
-  }
-  app.log.error('Exhausted port attempts');
-  process.exit(1);
-}
+  },
+  credentials: true
+});
+await app.register(rateLimit, {
+  max: 300, // per IP per timeWindow
+  timeWindow: '1 minute'
+});
+await app.register(jwt, { secret: JWT_SECRET });
 
-start();
+app.decorate('auth', async (req: any, _reply: any) => {
+  try {
+    await req.jwtVerify();
+  } catch {
+    return _reply.code(401).send({ error: 'unauthorized' });
+  }
+});
+
+// Health + Grids
+registerHealth(app);
+registerGrids(app);
+
+app.get('/', async () => ({ ok: true }));
+
+// graceful shutdown
+async function shutdown() {
+  app.log.info('Shutting down...');
+  await app.close();
+  await pool.end();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+app.listen({ port: PORT, host: '0.0.0.0' })
+  .then(addr => app.log.info({ addr }, 'API listening'))
+  .catch(err => { app.log.error(err); process.exit(1); });

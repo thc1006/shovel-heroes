@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm i -g pnpm@9
+      - run: pnpm install --frozen-lockfile=false
+      - name: Spectral (OpenAPI lint)
+        run: pnpm openapi:lint
+      - name: Build Redoc
+        run: pnpm openapi:build
+      - name: Unit tests
+        run: pnpm -w test
