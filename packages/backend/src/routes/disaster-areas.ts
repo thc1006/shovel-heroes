@@ -5,9 +5,14 @@ import { withConn } from '../lib/db.js';
 const CreateSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
-  location: z.string().optional(),
+  township: z.string().optional(),
+  county: z.string().optional(),
   severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
-  status: z.enum(['active', 'resolved', 'monitoring']).optional()
+  status: z.enum(['active', 'resolved', 'monitoring']).optional(),
+  center_lat: z.number(),
+  center_lng: z.number(),
+  bounds: z.any().optional(),
+  grid_size: z.number().optional()
 });
 
 const UpdateSchema = CreateSchema.partial();
@@ -40,8 +45,8 @@ export function registerDisasterAreaRoutes(app: FastifyInstance) {
       const userId = req.user?.sub;
       const result = await withConn(async (c) => {
         const { rows } = await c.query(
-          'INSERT INTO disaster_areas (name, center_lat, center_lng) VALUES ($1, $2, $3) RETURNING *',
-          [parsed.data.name, parsed.data.center_lat, parsed.data.center_lng]
+          'INSERT INTO disaster_areas (name, description, location, severity, status) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+          [parsed.data.name, parsed.data.description, parsed.data.township || '', parsed.data.severity || 'medium', parsed.data.status || 'active']
         );
         return rows[0];
       }, userId);
@@ -59,7 +64,7 @@ export function registerDisasterAreaRoutes(app: FastifyInstance) {
     try {
       const row = await withConn(async (c) => {
         const { rows } = await c.query(
-          'SELECT id, name, center_lat, center_lng, created_at, updated_at FROM disaster_areas WHERE id = $1',
+          'SELECT id, name, description, location, severity, status, created_at, updated_at FROM disaster_areas WHERE id = $1',
           [id]
         );
         return rows[0] || null;

@@ -566,6 +566,216 @@ describe('Integration Tests - Full Workflow', () => {
     });
   });
 
+  describe('Grid Update Tests', () => {
+    it('should update grid with partial fields', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      // Update only status and description
+      const updatePayload = {
+        status: 'completed',
+        description: 'Updated description'
+      };
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: updatePayload
+      });
+
+      expect(response.statusCode).toBe(200);
+      const updated = response.json();
+      expect(updated.status).toBe('completed');
+      expect(updated.description).toBe('Updated description');
+      expect(updated.name).toBe(grid.name); // Unchanged fields preserved
+    });
+
+    it('should update grid JSONB fields (bounds and supplies_needed)', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      // Update JSONB fields
+      const updatePayload = {
+        bounds: { north: 25.1, south: 24.9, east: 121.6, west: 121.4 },
+        supplies_needed: [
+          { name: '水', quantity: 100, received: 50, unit: '瓶' },
+          { name: '食物', quantity: 50, received: 25, unit: '份' }
+        ]
+      };
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: updatePayload
+      });
+
+      expect(response.statusCode).toBe(200);
+      const updated = response.json();
+      expect(updated.bounds).toEqual(updatePayload.bounds);
+      expect(updated.supplies_needed).toEqual(updatePayload.supplies_needed);
+    });
+
+    it('should update volunteer counts', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      const updatePayload = {
+        volunteer_needed: 50,
+        volunteer_registered: 30
+      };
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: updatePayload
+      });
+
+      expect(response.statusCode).toBe(200);
+      const updated = response.json();
+      expect(updated.volunteer_needed).toBe(50);
+      expect(updated.volunteer_registered).toBe(30);
+    });
+
+    it('should return 404 when updating non-existent grid', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: '/grids/00000000-0000-0000-0000-000000000000',
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: { status: 'completed' }
+      });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json().message).toBe('Not found');
+    });
+
+    it('should return current grid when no fields provided', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: {} // Empty payload
+      });
+
+      expect(response.statusCode).toBe(200);
+      const result = response.json();
+      expect(result.id).toBe(grid.id);
+      expect(result.name).toBe(grid.name);
+    });
+
+    it('should validate invalid grid_type in update', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: { grid_type: 'invalid_type' }
+      });
+
+      expect(response.statusCode).toBe(400);
+      const error = response.json();
+      expect(error.message).toBe('Invalid payload');
+      expect(error.issues).toBeDefined();
+    });
+
+    it('should require authentication for grid updates', async () => {
+      const { app, pool } = context;
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        payload: { status: 'completed' }
+        // No authorization header
+      });
+
+      expect([401, 500]).toContain(response.statusCode);
+    });
+
+    it('should update updated_at timestamp', async () => {
+      const { app, pool } = context;
+
+      const testUser = await createTestUser(pool);
+      const authToken = generateTestToken(testUser.id, app);
+
+      const disasterArea = await createTestDisasterArea(pool);
+      const grid = await createTestGrid(pool, disasterArea.id);
+
+      const originalUpdatedAt = grid.updated_at;
+
+      // Wait a bit to ensure timestamp difference
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const response = await app.inject({
+        method: 'PUT',
+        url: `/grids/${grid.id}`,
+        headers: {
+          authorization: `Bearer ${authToken}`
+        },
+        payload: { status: 'completed' }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const updated = response.json();
+
+      // updated_at should be different
+      expect(new Date(updated.updated_at).getTime()).toBeGreaterThan(
+        new Date(originalUpdatedAt).getTime()
+      );
+    });
+  });
+
   describe('Data Format Tests', () => {
     it('should use ISO 8601 format for timestamps', async () => {
       const { app, pool } = context;

@@ -4,7 +4,11 @@ import { withConn } from '../lib/db.js';
 
 const CreateSchema = z.object({
   grid_id: z.string().uuid(),
-  user_id: z.string().uuid()
+  volunteer_id: z.string().uuid()
+});
+
+const UpdateStatusSchema = z.object({
+  status: z.enum(['pending', 'confirmed', 'arrived', 'completed', 'cancelled'])
 });
 
 export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
@@ -13,7 +17,7 @@ export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
     try {
       const rows = await withConn(async (c) => {
         const { rows } = await c.query(
-          'SELECT id, grid_id, user_id, created_at FROM volunteer_registrations ORDER BY created_at DESC LIMIT 200'
+          'SELECT id, grid_id, volunteer_id, status, created_at FROM volunteer_registrations ORDER BY created_at DESC LIMIT 200'
         );
         return rows;
       });
@@ -34,21 +38,48 @@ export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
     try {
       const userId = req.user?.sub;
 
-      // RLS policy ensures user can only insert their own registration
-      // So we enforce that user_id matches the authenticated user
-      if (parsed.data.user_id !== userId) {
-        return reply.code(403).send({ message: 'Cannot register on behalf of other users' });
-      }
-
       const result = await withConn(async (c) => {
         const { rows } = await c.query(
-          'INSERT INTO volunteer_registrations (grid_id, user_id) VALUES ($1, $2) RETURNING *',
-          [parsed.data.grid_id, parsed.data.user_id]
+          'INSERT INTO volunteer_registrations (grid_id, volunteer_id, status) VALUES ($1, $2, $3) RETURNING *',
+          [parsed.data.grid_id, parsed.data.volunteer_id, 'pending']
         );
         return rows[0];
       }, userId);
 
       return reply.code(201).send(result);
+    } catch (err: any) {
+      app.log.error(err);
+      return reply.code(500).send({ message: 'Internal error' });
+    }
+  });
+
+  // Protected PUT - update volunteer registration status (requires auth, user can only update their own or admin)
+  app.put('/volunteer-registrations/:id', { preHandler: [app.auth as any] }, async (req: any, reply) => {
+    const { id } = req.params as any;
+    const parsed = UpdateStatusSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send({ message: 'Invalid payload', issues: parsed.error.issues });
+    }
+
+    try {
+      const userId = req.user?.sub;
+
+      // RLS policy ensures user can only update their own registration or admin can update any
+      // The UPDATE policy checks: volunteer_id matches user OR user is admin
+      const result = await withConn(async (c) => {
+        const { rows } = await c.query(
+          'UPDATE volunteer_registrations SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+          [parsed.data.status, id]
+        );
+        return rows[0] || null;
+      }, userId);
+
+      if (!result) {
+        return reply.code(404).send({ message: 'Not found or not authorized' });
+      }
+
+      return result;
     } catch (err: any) {
       app.log.error(err);
       return reply.code(500).send({ message: 'Internal error' });

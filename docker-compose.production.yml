@@ -1,0 +1,102 @@
+services:
+  # Backend API
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: shovelheroes-backend
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    ports:
+      - "8787:8787"
+    environment:
+      NODE_ENV: production
+      PORT: 8787
+      DATABASE_URL: postgres://postgres:postgres@db:5432/shovelheroes
+      JWT_SECRET: 4vesaOIX7REnAzHEG9f8WHu431sHyH85zFoWhzl6KO4=
+      CORS_ALLOWLIST: http://localhost,https://thc1006.shovel-heroes.com,https://thc1006-api.shovel-heroes.com,http://31.41.34.19
+      LOG_LEVEL: info
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_FROM: noreply@shovelheroes.local
+      RATE_LIMIT_MAX: 300
+      RATE_LIMIT_WINDOW: "1 minute"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - shovelheroes-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8787/healthz', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend (Nginx serving static files)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: shovelheroes-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+    networks:
+      - shovelheroes-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL Database (reusing existing)
+  db:
+    image: postgres:16-alpine
+    container_name: shovelheroes-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: shovelheroes
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - shovelheroes-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # MailHog (for development/testing emails)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: shovelheroes-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - shovelheroes-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8025"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  shovelheroes-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local

@@ -142,12 +142,11 @@ export default function Layout({ children, currentPageName }) {
                   </Button>
                 </div>
               ) : (
-                <Button
-                  onClick={() => User.login()}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  登入
-                </Button>
+                <Link to="/Login">
+                  <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+                    登入
+                  </Button>
+                </Link>
               )}
 
               {/* Mobile Menu Button */}

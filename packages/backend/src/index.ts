@@ -15,6 +15,8 @@ import { registerUserRoutes } from './routes/users.js';
 import { registerAnnouncementRoutes } from './routes/announcements.js';
 import { registerSupplyDonationRoutes } from './routes/supply-donations.js';
 import { registerGridDiscussionRoutes } from './routes/grid-discussions.js';
+import authRoutes from './routes/auth.js';
+import adminRoutes from './routes/admin.js';
 
 // Validate environment variables on startup
 validateEnv();
@@ -48,7 +50,34 @@ const app = Fastify({
 
 // Security headers with Helmet
 await app.register(helmet, {
-  contentSecurityPolicy: isProduction() ? undefined : false, // Disable CSP in dev for easier debugging
+  contentSecurityPolicy: isProduction()
+    ? {
+        directives: {
+          defaultSrc: ["'self'"],
+          connectSrc: [
+            "'self'",
+            'https://thc1006.shovel-heroes.com',
+            'https://thc1006-api.shovel-heroes.com',
+            'http://localhost:8787',
+            'http://localhost',
+            'https://wmts.nlsc.gov.tw', // 地圖圖磚來源
+          ],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
+          imgSrc: [
+            "'self'",
+            'data:',
+            'https:',
+            'http:',
+            'https://wmts.nlsc.gov.tw', // 地圖圖磚
+            'https://cdnjs.cloudflare.com', // Leaflet icons
+          ],
+          fontSrc: ["'self'", 'https:', 'data:'],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: [],
+        },
+      }
+    : false, // Disable CSP in dev for easier debugging
   hsts: isProduction() ? { maxAge: 31536000, includeSubDomains: true } : false,
 });
 
@@ -158,6 +187,8 @@ app.setErrorHandler((error, request, reply) => {
 
 // Register all routes (type assertion needed due to logger type mismatch)
 registerHealth(app as any);
+await app.register(authRoutes); // Auth routes (register, login, logout, etc.)
+await app.register(adminRoutes); // Admin routes (user management, verification, audit logs)
 registerGrids(app as any);
 registerDisasterAreaRoutes(app as any);
 registerVolunteersRoutes(app as any);

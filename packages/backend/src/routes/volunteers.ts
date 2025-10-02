@@ -9,11 +9,11 @@ import { withConn } from '../lib/db.js';
 interface RawRow {
   id: string;
   grid_id: string;
-  user_id: string;
+  volunteer_id: string;
   created_at: string;
-  user_name: string | null;
-  user_email: string | null;
-  user_phone: string | null;
+  volunteer_name: string | null;
+  volunteer_email: string | null;
+  volunteer_phone: string | null;
 }
 
 export function registerVolunteersRoutes(app: FastifyInstance) {
@@ -41,9 +41,10 @@ export function registerVolunteersRoutes(app: FastifyInstance) {
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const rows = await withConn(async (c) => {
-        const sql = `SELECT vr.id, vr.grid_id, vr.user_id, vr.created_at, u.name as user_name, u.email as user_email, u.phone as user_phone
+        const sql = `SELECT vr.id, vr.grid_id, vr.volunteer_id, vr.status, vr.created_at,
+                            v.name as volunteer_name, v.email as volunteer_email, v.phone as volunteer_phone
                      FROM volunteer_registrations vr
-                     LEFT JOIN users u ON u.id = vr.user_id
+                     LEFT JOIN volunteers v ON v.id = vr.volunteer_id
                      ${where}
                      ORDER BY vr.created_at DESC
                      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
@@ -70,9 +71,9 @@ export function registerVolunteersRoutes(app: FastifyInstance) {
       const data = rows.map(r => ({
         id: r.id,
         grid_id: r.grid_id,
-        user_id: r.user_id,
-        volunteer_name: r.user_name || '匿名志工',
-        volunteer_phone: can_view_phone ? (r.user_phone ? maskPhone(r.user_phone) : undefined) : undefined,
+        user_id: r.volunteer_id,
+        volunteer_name: r.volunteer_name || '匿名志工',
+        volunteer_phone: can_view_phone ? (r.volunteer_phone ? maskPhone(r.volunteer_phone) : undefined) : undefined,
         status: 'pending',
         available_time: null,
         skills: [],

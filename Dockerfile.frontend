@@ -1,0 +1,45 @@
+# ==========================================
+# Shovel Heroes - Frontend Dockerfile
+# Multi-stage build for optimized production image
+# ==========================================
+
+# Stage 1: Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+# Copy source files
+COPY . .
+
+# Set build environment variables
+ARG VITE_API_BASE=http://31.41.34.19/api
+ENV VITE_API_BASE=${VITE_API_BASE}
+ARG VITE_USE_FRONTEND=false
+ENV VITE_USE_FRONTEND=${VITE_USE_FRONTEND}
+ENV NODE_ENV=production
+
+# Build frontend
+RUN npm run build
+
+# Stage 2: Production stage with Nginx
+FROM nginx:alpine
+
+# Copy built frontend files
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy Nginx configuration
+COPY nginx/frontend.conf /etc/nginx/conf.d/default.conf
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+
+EXPOSE 80 443
+
+CMD ["nginx", "-g", "daemon off;"]
