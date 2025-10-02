@@ -1,0 +1,34 @@
+{
+  "test_name": "Cascade Delete Integration Test",
+  "test_date": "2025-10-02T11:27:50Z",
+  "test_grid_id": "28529acd-2d40-4e86-a027-d7c213689454",
+  "before_delete": {
+    "volunteer_registrations": 3,
+    "supply_donations": 2,
+    "grid_discussions": 1,
+    "grid_exists": 1
+  },
+  "delete_operation": {
+    "deleted_volunteer_registrations": 3,
+    "deleted_supply_donations": 2,
+    "deleted_grid_discussions": 1,
+    "deleted_grid": 1
+  },
+  "after_delete": {
+    "volunteer_registrations": 0,
+    "supply_donations": 0,
+    "grid_discussions": 0,
+    "grid_exists": 0
+  },
+  "test_results": {
+    "cascade_delete_status": "PASS",
+    "foreign_key_protection": "PASS"
+  },
+  "assertions": {
+    "all_volunteers_deleted": true,
+    "all_donations_deleted": true,
+    "all_discussions_deleted": true,
+    "grid_deleted": true,
+    "fk_constraint_protected": true
+  }
+}

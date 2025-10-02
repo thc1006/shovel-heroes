@@ -1,0 +1,75 @@
+{
+  "test_date": "2025-10-02T00:00:00Z",
+  "database": "shovelheroes",
+  "trigger_name": "trg_volunteer_registration_count",
+  "trigger_status": "enabled",
+  "trigger_table": "volunteer_registrations",
+  "test_summary": {
+    "total_tests": 5,
+    "passed": 5,
+    "failed": 0,
+    "success_rate": "100%"
+  },
+  "tests": {
+    "insert_increment": {
+      "status": "PASS",
+      "description": "Verify volunteer_registered increments by 1 on INSERT",
+      "details": "Initial count: 0, After INSERT: 1, After DELETE cleanup: 0",
+      "execution_time_ms": 11.88
+    },
+    "delete_decrement": {
+      "status": "PASS",
+      "description": "Verify volunteer_registered decrements by 1 on DELETE",
+      "details": "Correctly decrements and prevents negative values",
+      "execution_time_ms": 11.88
+    },
+    "negative_protection": {
+      "status": "PASS",
+      "description": "Verify volunteer_registered never goes below 0",
+      "details": "Created empty grid (count=0), inserted and deleted registration, final count remained 0",
+      "execution_time_ms": 4.672
+    },
+    "grid_transfer": {
+      "status": "PASS",
+      "description": "Verify UPDATE transfers count between grids correctly",
+      "details": "Grid1: 1→0 (decremented), Grid2: 0→1 (incremented)",
+      "execution_time_ms": 3.0
+    },
+    "data_consistency": {
+      "status": "PASS",
+      "description": "Verify stored counts match actual registration counts",
+      "details": "All 13 grids have consistent counts between volunteer_registered column and actual registrations",
+      "inconsistencies_found": 0
+    }
+  },
+  "data_integrity": {
+    "total_grids": 13,
+    "inconsistencies_found": 0,
+    "grids_with_mismatch": [],
+    "consistency_rate": "100%"
+  },
+  "trigger_function_logic": {
+    "insert_behavior": "Increments volunteer_registered by 1 on new registration",
+    "delete_behavior": "Decrements volunteer_registered by 1 using GREATEST(0, count-1) to prevent negative",
+    "update_behavior": "If grid_id changes: decrements old grid by 1, increments new grid by 1",
+    "timestamp_update": "Sets updated_at = NOW() on all operations"
+  },
+  "test_scenarios_covered": [
+    "Basic INSERT increment",
+    "Basic DELETE decrement",
+    "Negative value protection (GREATEST function)",
+    "Grid transfer via UPDATE (volunteer moves to different grid)",
+    "Data consistency validation across all grids"
+  ],
+  "performance": {
+    "total_test_execution_time_ms": 19.552,
+    "average_test_time_ms": 3.9104
+  },
+  "recommendations": [
+    "Trigger is functioning correctly",
+    "All data integrity constraints are maintained",
+    "No manual count corrections needed",
+    "Consider adding composite index on (grid_id, status) for volunteer_registrations if query performance becomes an issue"
+  ],
+  "conclusion": "All tests passed. The trg_volunteer_registration_count trigger correctly maintains data integrity for volunteer registration counts across INSERT, DELETE, and UPDATE operations. No inconsistencies detected in production data."
+}

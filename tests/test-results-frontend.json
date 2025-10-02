@@ -1,0 +1,365 @@
+{
+  "test_date": "2025-10-02T11:22:00Z",
+  "frontend_url": "http://31.41.34.19/",
+  "api_base_url": "http://31.41.34.19/api",
+  "summary": {
+    "total_api_endpoints": 8,
+    "working_endpoints": 5,
+    "broken_endpoints": 3,
+    "frontend_accessible": true,
+    "cors_configured": true,
+    "critical_issues": 3
+  },
+  "frontend_tests": {
+    "homepage": {
+      "url": "http://31.41.34.19/",
+      "status": "accessible",
+      "http_status": 200,
+      "response_time": "0.001322s",
+      "title": "鏟子英雄",
+      "has_react_root": true,
+      "issues": []
+    },
+    "api_configuration": {
+      "config_file": "/home/thc1006/dev/shovel-heroes/src/api/config.js",
+      "api_base_url": "/api",
+      "api_mode": "rest",
+      "timeout": "30000ms",
+      "env_file": ".env.production",
+      "vite_use_frontend": "false",
+      "issues": []
+    }
+  },
+  "backend_api_tests": {
+    "healthz": {
+      "endpoint": "GET /api/healthz",
+      "status": "✅ working",
+      "http_status": 200,
+      "response_time": "0.003232s",
+      "response": {
+        "status": "ok",
+        "db": "ok"
+      },
+      "issues": []
+    },
+    "disaster_areas": {
+      "endpoint": "GET /api/disaster-areas",
+      "status": "✅ working",
+      "http_status": 200,
+      "response_count": 4,
+      "issues": []
+    },
+    "grids": {
+      "endpoint": "GET /api/grids",
+      "status": "✅ working",
+      "http_status": 200,
+      "response_count": 13,
+      "issues": []
+    },
+    "announcements": {
+      "endpoint": "GET /api/announcements",
+      "status": "✅ working",
+      "http_status": 200,
+      "response_count": 2,
+      "issues": []
+    },
+    "volunteer_registrations": {
+      "endpoint": "GET /api/volunteer-registrations",
+      "status": "❌ broken",
+      "http_status": 500,
+      "error": "column \"user_id\" does not exist",
+      "issues": [
+        {
+          "severity": "critical",
+          "type": "schema_mismatch",
+          "description": "Backend code expects 'user_id' column but database schema uses 'volunteer_id'",
+          "location": "packages/backend/src/routes/volunteer-registrations.ts:20",
+          "fix_required": "Update SQL query to use 'volunteer_id' instead of 'user_id'",
+          "affected_operations": ["GET /volunteer-registrations", "POST /volunteer-registrations", "PUT /volunteer-registrations/:id"]
+        }
+      ]
+    },
+    "supply_donations": {
+      "endpoint": "GET /api/supply-donations",
+      "status": "❌ broken",
+      "http_status": 500,
+      "error": "column \"name\" does not exist",
+      "issues": [
+        {
+          "severity": "critical",
+          "type": "schema_mismatch",
+          "description": "Backend code expects 'name' column but database schema uses 'donor_name' and 'item_type'",
+          "location": "packages/backend/src/routes/supply-donations.ts:25",
+          "fix_required": "Update SQL query to use 'donor_name, item_type' instead of 'name'",
+          "affected_operations": ["GET /supply-donations", "POST /supply-donations", "PUT /supply-donations/:id"]
+        }
+      ]
+    },
+    "volunteers": {
+      "endpoint": "GET /api/volunteers",
+      "status": "❌ broken",
+      "http_status": 500,
+      "error": "column vr.user_id does not exist",
+      "issues": [
+        {
+          "severity": "critical",
+          "type": "schema_mismatch",
+          "description": "Backend joins on 'user_id' but schema uses 'volunteer_id'",
+          "location": "packages/backend/src/routes/volunteers.ts",
+          "fix_required": "Update JOIN query to use 'volunteer_id'",
+          "affected_operations": ["GET /volunteers"]
+        }
+      ]
+    }
+  },
+  "cors_configuration": {
+    "status": "✅ working",
+    "preflight_test": {
+      "endpoint": "OPTIONS /api/grids",
+      "http_status": 204,
+      "headers": {
+        "access-control-allow-origin": "http://31.41.34.19",
+        "access-control-allow-credentials": "true",
+        "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "access-control-allow-headers": "Content-Type, Authorization"
+      }
+    },
+    "issues": []
+  },
+  "frontend_api_calls": {
+    "DisasterArea": {
+      "methods_used": ["list", "create", "delete", "get"],
+      "locations": [
+        "src/components/admin/AddAreaModal.jsx:131",
+        "src/pages/Admin.jsx:64",
+        "src/pages/Admin.jsx:132",
+        "src/pages/Layout.jsx:23",
+        "src/pages/RequestHelp.jsx:44",
+        "src/pages/Map.jsx:312",
+        "src/pages/GridMonitor.jsx:36"
+      ],
+      "backend_endpoint": "GET /api/disaster-areas",
+      "status": "✅ working"
+    },
+    "Grid": {
+      "methods_used": ["list", "get", "create", "update", "delete"],
+      "locations": [
+        "src/components/admin/EditGridModal.jsx:78",
+        "src/components/admin/AddGridModal.jsx:205",
+        "src/components/admin/AddGridModal.jsx:247",
+        "src/components/map/GridDetailModal.jsx:176",
+        "src/components/map/GridDetailModal.jsx:187",
+        "src/components/supplies/AddSupplyRequestModal.jsx:48",
+        "src/components/supplies/AddSupplyRequestModal.jsx:66",
+        "src/pages/Admin.jsx:65",
+        "src/pages/Admin.jsx:184",
+        "src/pages/Supplies.jsx:40",
+        "src/pages/Map.jsx:313",
+        "src/pages/Map.jsx:399",
+        "src/pages/GridMonitor.jsx:35",
+        "src/pages/Volunteers.jsx:38",
+        "src/pages/Volunteers.jsx:72",
+        "src/pages/Volunteers.jsx:81"
+      ],
+      "backend_endpoint": "GET /api/grids",
+      "status": "✅ working"
+    },
+    "VolunteerRegistration": {
+      "methods_used": ["list", "create", "update", "delete"],
+      "locations": [
+        "src/components/map/GridDetailModal.jsx:121",
+        "src/pages/Admin.jsx:66",
+        "src/pages/Admin.jsx:174",
+        "src/pages/Volunteers.jsx:66"
+      ],
+      "backend_endpoint": "GET /api/volunteer-registrations",
+      "status": "❌ broken - schema mismatch (user_id vs volunteer_id)"
+    },
+    "Announcement": {
+      "methods_used": ["list", "create", "update", "delete"],
+      "locations": [
+        "src/components/map/AnnouncementModal.jsx:88",
+        "src/components/map/AnnouncementModal.jsx:90",
+        "src/components/map/AnnouncementModal.jsx:104",
+        "src/components/map/AnnouncementPanel.jsx:30"
+      ],
+      "backend_endpoint": "GET /api/announcements",
+      "status": "✅ working"
+    },
+    "SupplyDonation": {
+      "methods_used": ["list", "create", "update", "delete"],
+      "locations": [],
+      "backend_endpoint": "GET /api/supply-donations",
+      "status": "❌ broken - schema mismatch (name vs donor_name/item_type)"
+    }
+  },
+  "database_schema_issues": [
+    {
+      "table": "volunteer_registrations",
+      "issue": "Column name mismatch",
+      "expected_by_code": "user_id",
+      "actual_in_schema": "volunteer_id",
+      "severity": "critical",
+      "impact": "All volunteer registration API endpoints return 500 errors",
+      "recommendation": "Update backend code in packages/backend/src/routes/volunteer-registrations.ts to use 'volunteer_id' instead of 'user_id'"
+    },
+    {
+      "table": "supply_donations",
+      "issue": "Column name mismatch",
+      "expected_by_code": "name",
+      "actual_in_schema": "donor_name, item_type",
+      "severity": "critical",
+      "impact": "All supply donation API endpoints return 500 errors",
+      "recommendation": "Update backend code in packages/backend/src/routes/supply-donations.ts to use correct column names"
+    },
+    {
+      "table": "volunteer_registrations",
+      "issue": "Missing required columns in SELECT",
+      "expected_by_code": "status, updated_at",
+      "actual_in_schema": "status exists but not selected in GET query",
+      "severity": "medium",
+      "impact": "Frontend may not receive all required data",
+      "recommendation": "Update SELECT query to include all necessary columns"
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "critical",
+      "category": "backend_fix",
+      "title": "Fix volunteer_registrations endpoint schema mismatch",
+      "description": "Update all references from 'user_id' to 'volunteer_id' in volunteer-registrations.ts",
+      "files": [
+        "packages/backend/src/routes/volunteer-registrations.ts",
+        "packages/backend/src/routes/volunteers.ts"
+      ],
+      "estimated_effort": "15 minutes"
+    },
+    {
+      "priority": "critical",
+      "category": "backend_fix",
+      "title": "Fix supply_donations endpoint schema mismatch",
+      "description": "Update column names from 'name' to 'donor_name' and 'item_type' in supply-donations.ts",
+      "files": [
+        "packages/backend/src/routes/supply-donations.ts"
+      ],
+      "estimated_effort": "15 minutes"
+    },
+    {
+      "priority": "high",
+      "category": "testing",
+      "title": "Add integration tests for all API endpoints",
+      "description": "Create automated tests to catch schema mismatches before deployment",
+      "files": [
+        "tests/integration/api-endpoints.test.js"
+      ],
+      "estimated_effort": "2 hours"
+    },
+    {
+      "priority": "medium",
+      "category": "monitoring",
+      "title": "Add database migration validation",
+      "description": "Ensure backend code matches database schema during CI/CD",
+      "files": [
+        ".github/workflows/test.yml"
+      ],
+      "estimated_effort": "1 hour"
+    }
+  ],
+  "docker_containers": {
+    "backend": {
+      "container_name": "shovelheroes-backend",
+      "image": "shovel-heroes-backend",
+      "status": "up (10 minutes)",
+      "health": "healthy",
+      "port": "8787"
+    },
+    "frontend": {
+      "container_name": "shovelheroes-frontend",
+      "image": "shovel-heroes-frontend",
+      "status": "up (41 minutes)",
+      "health": "unhealthy",
+      "port": "80, 443",
+      "note": "Container is running but marked unhealthy - investigate health check"
+    },
+    "postgres": {
+      "container_name": "shovelheroes-postgres",
+      "image": "postgres:16-alpine",
+      "status": "up (1 hour)",
+      "health": "healthy",
+      "port": "5432"
+    }
+  },
+  "pages_tested": [
+    {
+      "path": "/",
+      "name": "Homepage",
+      "status": "accessible",
+      "http_status": 200,
+      "loads_data": true,
+      "api_calls_expected": ["DisasterArea.list()"],
+      "issues": []
+    },
+    {
+      "path": "/map",
+      "name": "Map Page",
+      "status": "accessible (inferred)",
+      "api_calls_expected": [
+        "DisasterArea.list()",
+        "Grid.list()",
+        "Grid.update(id, data)",
+        "VolunteerRegistration.create()",
+        "Announcement.list()"
+      ],
+      "issues": [
+        "VolunteerRegistration API will fail with 500 error"
+      ]
+    },
+    {
+      "path": "/volunteers",
+      "name": "Volunteers Page",
+      "status": "accessible (inferred)",
+      "api_calls_expected": [
+        "Grid.list()",
+        "Grid.update()",
+        "VolunteerRegistration.update()"
+      ],
+      "issues": [
+        "VolunteerRegistration.update() will fail with 500 error"
+      ]
+    },
+    {
+      "path": "/supplies",
+      "name": "Supplies Page",
+      "status": "accessible (inferred)",
+      "api_calls_expected": [
+        "Grid.list()",
+        "Grid.update()"
+      ],
+      "issues": []
+    },
+    {
+      "path": "/admin",
+      "name": "Admin Page",
+      "status": "accessible (inferred)",
+      "api_calls_expected": [
+        "DisasterArea.list()",
+        "DisasterArea.delete()",
+        "Grid.list()",
+        "Grid.delete()",
+        "VolunteerRegistration.list()",
+        "VolunteerRegistration.delete()"
+      ],
+      "issues": [
+        "VolunteerRegistration API calls will fail with 500 error"
+      ]
+    }
+  ],
+  "next_steps": [
+    "1. Fix volunteer_registrations schema mismatch (CRITICAL)",
+    "2. Fix supply_donations schema mismatch (CRITICAL)",
+    "3. Investigate frontend container health check failure",
+    "4. Add comprehensive integration tests",
+    "5. Set up CI/CD validation for schema consistency",
+    "6. Manual browser testing after fixes are deployed"
+  ]
+}

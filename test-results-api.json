@@ -1,0 +1,18 @@
+{
+  "test_time": "2025-10-02T11:22:33Z",
+  "api_base": "http://31.41.34.19/api",
+  "total_endpoints": 27,
+  "tests_executed": 19,
+  "passed": 16,
+  "failed": 3,
+  "pass_rate": "84.2%",
+  "public_endpoints": {
+    "description": "Endpoints accessible without authentication",
+    "tested": 12
+  },
+  "protected_endpoints": {
+    "description": "Endpoints requiring JWT authentication",
+    "tested": 7
+  },
+  "details": [{"endpoint":"GET /healthz","status":"PASS","http_code":200,"expected":200,"response_time_ms":16,"description":"Health check"},{"endpoint":"GET /disaster-areas","status":"PASS","http_code":200,"expected":200,"response_time_ms":12,"description":"List disaster areas"},{"endpoint":"GET /grids","status":"PASS","http_code":200,"expected":200,"response_time_ms":18,"description":"List grids"},{"endpoint":"GET /grids?grid_type=manpower","status":"PASS","http_code":200,"expected":200,"response_time_ms":14,"description":"Filter grids by type"},{"endpoint":"GET /grids?status=open","status":"PASS","http_code":200,"expected":200,"response_time_ms":15,"description":"Filter grids by status"},{"endpoint":"GET /volunteer-registrations","status":"FAIL","http_code":500,"expected":200,"response_time_ms":19,"description":"List volunteer registrations"},{"endpoint":"GET /volunteers","status":"FAIL","http_code":500,"expected":200,"response_time_ms":13,"description":"List volunteers (aggregated)"},{"endpoint":"GET /supply-donations","status":"FAIL","http_code":500,"expected":200,"response_time_ms":14,"description":"List supply donations"},{"endpoint":"GET /announcements","status":"PASS","http_code":200,"expected":200,"response_time_ms":14,"description":"List announcements"},{"endpoint":"GET /disaster-areas/10cb74d2-2831-43fa-99db-d6b4961d48c5","status":"PASS","http_code":200,"expected":200,"response_time_ms":15,"description":"Get single disaster area"},{"endpoint":"GET /grids?area_id=10cb74d2-2831-43fa-99db-d6b4961d48c5","status":"PASS","http_code":200,"expected":200,"response_time_ms":13,"description":"Filter grids by area"},{"endpoint":"POST /grids","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Create grid (no auth)"},{"endpoint":"PUT /grids/80389593-820d-40a0-a813-ca57956ccf9f","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Update grid (no auth)"},{"endpoint":"DELETE /grids/80389593-820d-40a0-a813-ca57956ccf9f","status":"PASS","http_code":401,"expected":401,"response_time_ms":14,"description":"Delete grid (no auth)"},{"endpoint":"POST /announcements","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Create announcement (no auth)"},{"endpoint":"PUT /announcements/9c3bcf74-5afd-4f43-b0f9-3a7f5f76fd22","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Update announcement (no auth)"},{"endpoint":"DELETE /announcements/9c3bcf74-5afd-4f43-b0f9-3a7f5f76fd22","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Delete announcement (no auth)"},{"endpoint":"PUT /volunteer-registrations/00000000-0000-0000-0000-000000000000","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Update registration (no auth)"},{"endpoint":"PUT /supply-donations/00000000-0000-0000-0000-000000000000","status":"PASS","http_code":401,"expected":401,"response_time_ms":13,"description":"Update donation (no auth)"}]
+}
