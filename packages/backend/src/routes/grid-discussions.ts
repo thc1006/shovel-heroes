@@ -1,22 +1,52 @@
 import type { FastifyInstance } from 'fastify';
-import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { withConn } from '../lib/db.js';
 
-const CreateSchema = z.object({ grid_id: z.string(), user_id: z.string().optional(), content: z.string().min(1) });
+const CreateSchema = z.object({
+  grid_id: z.string().uuid(),
+  content: z.string().min(1)
+});
 
 export function registerGridDiscussionRoutes(app: FastifyInstance) {
-  app.get('/grid-discussions', async () => {
-    if (!app.hasDecorator('db')) return [];
-    const { rows } = await app.db.query('SELECT * FROM grid_discussions ORDER BY created_at DESC');
-    return rows;
+  // Public GET - list all grid discussions
+  app.get('/grid-discussions', async (req, reply) => {
+    try {
+      const rows = await withConn(async (c) => {
+        const { rows } = await c.query(
+          'SELECT id, grid_id, user_id, content, created_at FROM grid_discussions ORDER BY created_at DESC LIMIT 200'
+        );
+        return rows;
+      });
+      return rows;
+    } catch (err: any) {
+      app.log.error(err);
+      return reply.code(500).send({ message: 'Internal error' });
+    }
   });
-  app.post('/grid-discussions', async (req, reply) => {
+
+  // Protected POST - create grid discussion (requires auth, user_id comes from JWT)
+  app.post('/grid-discussions', { preHandler: [app.auth as any] }, async (req: any, reply) => {
     const parsed = CreateSchema.safeParse(req.body);
-    if (!parsed.success) return reply.status(400).send({ message: 'Invalid payload', issues: parsed.error.issues });
-    if (!app.hasDecorator('db')) return reply.status(503).send({ message: 'DB not ready' });
-    const id = randomUUID();
-    const { grid_id, user_id, content } = parsed.data;
-    const { rows } = await app.db.query('INSERT INTO grid_discussions (id, grid_id, user_id, content) VALUES ($1,$2,$3,$4) RETURNING *', [id, grid_id, user_id||null, content]);
-    return reply.status(201).send(rows[0]);
+    if (!parsed.success) {
+      return reply.code(400).send({ message: 'Invalid payload', issues: parsed.error.issues });
+    }
+
+    try {
+      const userId = req.user?.sub;
+      const { grid_id, content } = parsed.data;
+
+      const result = await withConn(async (c) => {
+        const { rows } = await c.query(
+          'INSERT INTO grid_discussions (grid_id, user_id, content) VALUES ($1, $2, $3) RETURNING *',
+          [grid_id, userId, content]
+        );
+        return rows[0];
+      }, userId);
+
+      return reply.code(201).send(result);
+    } catch (err: any) {
+      app.log.error(err);
+      return reply.code(500).send({ message: 'Internal error' });
+    }
   });
 }
