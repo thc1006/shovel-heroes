@@ -52,6 +52,11 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Vitest coverage
+coverage/
+.vitest/
+test-results/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 
@@ -61,12 +66,21 @@ ipython_config.py
 
 # Environments
 .env
+.env.local
+.env.*.local
+.env.production
+.env.development
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Backend environments
+packages/backend/.env
+packages/backend/.env.local
+packages/backend/.env.*.local
 
 # IDEs
 .spyder-project
@@ -180,3 +194,4 @@ claude-flow
 hive-mind-prompt-*.txt
 .gitignore
 .gitignore
+node_modules
