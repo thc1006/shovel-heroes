@@ -13,6 +13,7 @@ export interface RLSTestContext {
 /**
  * Execute a query within an RLS context
  * This sets app.user_id and runs the query in a transaction
+ * Note: PostgreSQL SET commands don't support parameters, so we use string formatting
  */
 export async function withRLSContext<T>(
   pool: Pool,
@@ -22,7 +23,8 @@ export async function withRLSContext<T>(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SET LOCAL app.user_id = $1', [userId]);
+    // PostgreSQL SET LOCAL doesn't support parameters, use literal
+    await client.query(`SET LOCAL app.user_id = '${userId}'`);
 
     const result = await fn(client);
 
@@ -145,25 +147,27 @@ export async function createRLSTestUser(
 
 /**
  * Create a test disaster area
+ * Note: disaster_areas table uses 'location' text field, not center_lat/lng
  */
 export async function createRLSTestDisasterArea(
   pool: Pool,
   data?: Partial<{
     name: string;
-    center_lat: number;
-    center_lng: number;
+    description: string;
+    location: string;
     severity: string;
   }>
 ): Promise<any> {
   const { rows } = await pool.query(
-    `INSERT INTO disaster_areas (name, center_lat, center_lng, severity)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO disaster_areas (name, description, location, severity, status)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [
       data?.name || 'Test Disaster Area',
-      data?.center_lat || 25.0330,
-      data?.center_lng || 121.5654,
-      data?.severity || 'medium'
+      data?.description || 'RLS test disaster area',
+      data?.location || 'Test Location (25.0330, 121.5654)',
+      data?.severity || 'medium',
+      'active'
     ]
   );
 
@@ -172,6 +176,7 @@ export async function createRLSTestDisasterArea(
 
 /**
  * Create a test grid
+ * Note: grids table uses 'area_id' (text), not 'disaster_area_id' (UUID)
  */
 export async function createRLSTestGrid(
   pool: Pool,
@@ -183,14 +188,15 @@ export async function createRLSTestGrid(
   }>
 ): Promise<any> {
   const { rows } = await pool.query(
-    `INSERT INTO grids (disaster_area_id, name, code, grid_manager_id)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO grids (area_id, name, code, grid_manager_id, status)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [
-      disasterAreaId,
+      disasterAreaId, // area_id is text, so we can pass the disaster_area_id as text
       data?.name || 'Test Grid',
       data?.code || 'TG1',
-      data?.grid_manager_id || null
+      data?.grid_manager_id || null,
+      'open'
     ]
   );
 

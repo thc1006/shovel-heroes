@@ -47,8 +47,8 @@ describe('RLS Policies: grids table', () => {
       // Create a grid without RLS context (as superuser)
       await withoutRLSContext(pool, async (client) => {
         await client.query(
-          `INSERT INTO grids (disaster_area_id, name, code) VALUES ($1, $2, $3)`,
-          [disasterArea.id, 'Test Grid', 'TG1']
+          `INSERT INTO grids (area_id, name, code, status) VALUES ($1, $2, $3, $4)`,
+          [disasterArea.id, 'Test Grid', 'TG1', 'open']
         );
       });
 
@@ -64,8 +64,8 @@ describe('RLS Policies: grids table', () => {
 
       await withoutRLSContext(pool, async (client) => {
         await client.query(
-          `INSERT INTO grids (disaster_area_id, name, code) VALUES ($1, $2, $3)`,
-          [disasterArea.id, 'Test Grid', 'TG1']
+          `INSERT INTO grids (area_id, name, code, status) VALUES ($1, $2, $3, $4)`,
+          [disasterArea.id, 'Test Grid', 'TG1', 'open']
         );
       });
 
@@ -81,8 +81,8 @@ describe('RLS Policies: grids table', () => {
 
       await withRLSContext(pool, coordinator.id, async (client) => {
         const { rows } = await client.query(
-          `INSERT INTO grids (disaster_area_id, name, code) VALUES ($1, $2, $3) RETURNING *`,
-          [disasterArea.id, 'New Grid', 'NG1']
+          `INSERT INTO grids (area_id, name, code, status) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [disasterArea.id, 'New Grid', 'NG1', 'open']
         );
         expect(rows).toHaveLength(1);
         expect(rows[0].name).toBe('New Grid');
@@ -96,8 +96,8 @@ describe('RLS Policies: grids table', () => {
 
       await withRLSContext(pool, admin.id, async (client) => {
         const { rows } = await client.query(
-          `INSERT INTO grids (disaster_area_id, name, code) VALUES ($1, $2, $3) RETURNING *`,
-          [disasterArea.id, 'New Grid', 'NG1']
+          `INSERT INTO grids (area_id, name, code, status) VALUES ($1, $2, $3, $4) RETURNING *`,
+          [disasterArea.id, 'New Grid', 'NG1', 'open']
         );
         expect(rows).toHaveLength(1);
       });
@@ -111,8 +111,8 @@ describe('RLS Policies: grids table', () => {
       await expectCannotAccess(
         pool,
         volunteer.id,
-        `INSERT INTO grids (disaster_area_id, name, code) VALUES ($1, $2, $3) RETURNING *`,
-        [disasterArea.id, 'New Grid', 'NG1']
+        `INSERT INTO grids (area_id, name, code, status) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [disasterArea.id, 'New Grid', 'NG1', 'open']
       );
     });
 
@@ -124,8 +124,8 @@ describe('RLS Policies: grids table', () => {
       await expectCannotAccess(
         pool,
         analyst.id,
-        `INSERT INTO grids (disaster_area_id, name, code) VALUES ($1, $2, $3) RETURNING *`,
-        [disasterArea.id, 'New Grid', 'NG1']
+        `INSERT INTO grids (area_id, name, code, status) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [disasterArea.id, 'New Grid', 'NG1', 'open']
       );
     });
   });
@@ -231,9 +231,9 @@ describe('RLS Policies: grids table', () => {
       // Coordinator assigns a grid manager
       await withRLSContext(pool, coordinator.id, async (client) => {
         const { rows } = await client.query(
-          `INSERT INTO grids (disaster_area_id, name, code, grid_manager_id)
-           VALUES ($1, $2, $3, $4) RETURNING *`,
-          [disasterArea.id, 'Managed Grid', 'MG1', manager.id]
+          `INSERT INTO grids (area_id, name, code, grid_manager_id, status)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [disasterArea.id, 'Managed Grid', 'MG1', manager.id, 'open']
         );
         expect(rows[0].grid_manager_id).toBe(manager.id);
       });

@@ -37,7 +37,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const payload = {
           grid_id: grid.id,
-          content: 'This is a discussion message about the grid operations.'
+          message: 'This is a discussion message about the grid operations.'
         };
 
         // Act
@@ -55,7 +55,7 @@ describe('Grid Discussions Routes - TDD', () => {
         const created = response.json();
         expect(created.grid_id).toBe(grid.id);
         expect(created.user_id).toBe(testUser.id);
-        expect(created.content).toBe('This is a discussion message about the grid operations.');
+        expect(created.message).toBe('This is a discussion message about the grid operations.');
         expect(created.id).toBeDefined();
         expect(created.created_at).toBeDefined();
       });
@@ -70,7 +70,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const payload = {
           grid_id: grid.id,
-          content: 'Testing user association'
+          message: 'Testing user association'
         };
 
         // Act
@@ -113,7 +113,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken1}` },
           payload: {
             grid_id: grid.id,
-            content: 'First discussion message'
+            message: 'First discussion message'
           }
         });
 
@@ -123,7 +123,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken2}` },
           payload: {
             grid_id: grid.id,
-            content: 'Second discussion message'
+            message: 'Second discussion message'
           }
         });
 
@@ -145,7 +145,7 @@ describe('Grid Discussions Routes - TDD', () => {
         const authToken = generateTestToken(testUser.id, app);
 
         const invalidPayload = {
-          content: 'Discussion without grid_id'
+          message: 'Discussion without grid_id'
         };
 
         // Act
@@ -172,7 +172,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const invalidPayload = {
           grid_id: 'invalid-uuid',
-          content: 'Discussion with invalid grid_id'
+          message: 'Discussion with invalid grid_id'
         };
 
         // Act
@@ -189,7 +189,7 @@ describe('Grid Discussions Routes - TDD', () => {
         expect(response.statusCode).toBe(400);
       });
 
-      it('should return 400 when content is missing', async () => {
+      it('should return 400 when message is missing', async () => {
         // Arrange
         const { app, pool } = context;
         const testUser = await createTestUser(pool);
@@ -215,7 +215,7 @@ describe('Grid Discussions Routes - TDD', () => {
         expect(response.statusCode).toBe(400);
       });
 
-      it('should return 400 when content is empty string', async () => {
+      it('should return 400 when message is empty string', async () => {
         // Arrange
         const { app, pool } = context;
         const testUser = await createTestUser(pool);
@@ -225,7 +225,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const invalidPayload = {
           grid_id: grid.id,
-          content: ''
+          message: ''
         };
 
         // Act
@@ -250,7 +250,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const payload = {
           grid_id: '00000000-0000-0000-0000-000000000000', // Non-existent UUID
-          content: 'Discussion for non-existent grid'
+          message: 'Discussion for non-existent grid'
         };
 
         // Act
@@ -277,7 +277,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const payload = {
           grid_id: grid.id,
-          content: 'Unauthorized discussion'
+          message: 'Unauthorized discussion'
         };
 
         // Act
@@ -299,7 +299,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const payload = {
           grid_id: grid.id,
-          content: 'Invalid token discussion'
+          message: 'Invalid token discussion'
         };
 
         // Act
@@ -332,7 +332,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
         const payload = {
           grid_id: grid.id,
-          content: 'Expired token discussion'
+          message: 'Expired token discussion'
         };
 
         // Act
@@ -386,7 +386,7 @@ describe('Grid Discussions Routes - TDD', () => {
             headers: { authorization: `Bearer ${authToken}` },
             payload: {
               grid_id: grid.id,
-              content: `Discussion message ${i}`
+              message: `Discussion message ${i}`
             }
           });
         }
@@ -404,7 +404,7 @@ describe('Grid Discussions Routes - TDD', () => {
         expect(discussions[0]).toHaveProperty('id');
         expect(discussions[0]).toHaveProperty('grid_id');
         expect(discussions[0]).toHaveProperty('user_id');
-        expect(discussions[0]).toHaveProperty('content');
+        expect(discussions[0]).toHaveProperty('message');
         expect(discussions[0]).toHaveProperty('created_at');
       });
 
@@ -422,7 +422,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid.id,
-            content: 'First message'
+            message: 'First message'
           }
         });
 
@@ -434,7 +434,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid.id,
-            content: 'Second message'
+            message: 'Second message'
           }
         });
 
@@ -449,8 +449,8 @@ describe('Grid Discussions Routes - TDD', () => {
         const discussions = response.json();
         expect(discussions).toHaveLength(2);
         // Most recent should be first
-        expect(discussions[0].content).toBe('Second message');
-        expect(discussions[1].content).toBe('First message');
+        expect(discussions[0].message).toBe('Second message');
+        expect(discussions[1].message).toBe('First message');
       });
 
       it('should limit results to 200 discussions', async () => {
@@ -463,7 +463,7 @@ describe('Grid Discussions Routes - TDD', () => {
         // Create 205 discussions directly in DB
         for (let i = 1; i <= 205; i++) {
           await pool.query(
-            `INSERT INTO grid_discussions (id, grid_id, user_id, content)
+            `INSERT INTO grid_discussions (id, grid_id, user_id, message)
              VALUES (gen_random_uuid(), $1, $2, $3)`,
             [grid.id, testUser.id, `Message ${i}`]
           );
@@ -496,7 +496,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid1.id,
-            content: 'Discussion for grid 1'
+            message: 'Discussion for grid 1'
           }
         });
 
@@ -506,7 +506,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid2.id,
-            content: 'Discussion for grid 2'
+            message: 'Discussion for grid 2'
           }
         });
 
@@ -528,7 +528,7 @@ describe('Grid Discussions Routes - TDD', () => {
   });
 
   describe('Edge Cases & Security', () => {
-    it('should handle Unicode characters in content', async () => {
+    it('should handle Unicode characters in message', async () => {
       // Arrange
       const { app, pool } = context;
       const testUser = await createTestUser(pool);
@@ -538,7 +538,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
       const payload = {
         grid_id: grid.id,
-        content: '這裡需要更多志工！😊 Let\'s help together! 🙏'
+        message: '這裡需要更多志工！😊 Let\'s help together! 🙏'
       };
 
       // Act
@@ -552,10 +552,10 @@ describe('Grid Discussions Routes - TDD', () => {
       // Assert
       expect(response.statusCode).toBe(201);
       const created = response.json();
-      expect(created.content).toBe('這裡需要更多志工！😊 Let\'s help together! 🙏');
+      expect(created.message).toBe('這裡需要更多志工！😊 Let\'s help together! 🙏');
     });
 
-    it('should handle very long content', async () => {
+    it('should handle very long message', async () => {
       // Arrange
       const { app, pool } = context;
       const testUser = await createTestUser(pool);
@@ -566,7 +566,7 @@ describe('Grid Discussions Routes - TDD', () => {
       const longContent = 'A'.repeat(5000);
       const payload = {
         grid_id: grid.id,
-        content: longContent
+        message: longContent
       };
 
       // Act
@@ -581,7 +581,7 @@ describe('Grid Discussions Routes - TDD', () => {
       expect([201, 400]).toContain(response.statusCode);
       if (response.statusCode === 201) {
         const created = response.json();
-        expect(created.content).toBe(longContent);
+        expect(created.message).toBe(longContent);
       }
     });
 
@@ -595,7 +595,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
       const maliciousPayload = {
         grid_id: grid.id,
-        content: "'; DROP TABLE grid_discussions; --"
+        message: "'; DROP TABLE grid_discussions; --"
       };
 
       // Act
@@ -609,7 +609,7 @@ describe('Grid Discussions Routes - TDD', () => {
       // Assert - Should create successfully with sanitized input
       expect(response.statusCode).toBe(201);
       const created = response.json();
-      expect(created.content).toBe("'; DROP TABLE grid_discussions; --");
+      expect(created.message).toBe("'; DROP TABLE grid_discussions; --");
 
       // Verify grid_discussions table still exists
       const checkResponse = await app.inject({
@@ -635,7 +635,7 @@ describe('Grid Discussions Routes - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid.id,
-            content: `Concurrent message ${i + 1}`
+            message: `Concurrent message ${i + 1}`
           }
         })
       );
@@ -646,7 +646,7 @@ describe('Grid Discussions Routes - TDD', () => {
       responses.forEach((response, i) => {
         expect(response.statusCode).toBe(201);
         const created = response.json();
-        expect(created.content).toBe(`Concurrent message ${i + 1}`);
+        expect(created.message).toBe(`Concurrent message ${i + 1}`);
       });
 
       // Verify all were created
@@ -658,7 +658,7 @@ describe('Grid Discussions Routes - TDD', () => {
       expect(discussions).toHaveLength(10);
     });
 
-    it('should handle XSS attempts in content', async () => {
+    it('should handle XSS attempts in message', async () => {
       // Arrange
       const { app, pool } = context;
       const testUser = await createTestUser(pool);
@@ -668,7 +668,7 @@ describe('Grid Discussions Routes - TDD', () => {
 
       const xssPayload = {
         grid_id: grid.id,
-        content: '<script>alert("XSS")</script>'
+        message: '<script>alert("XSS")</script>'
       };
 
       // Act
@@ -682,7 +682,7 @@ describe('Grid Discussions Routes - TDD', () => {
       // Assert - Should store as-is (sanitization should happen on frontend)
       expect(response.statusCode).toBe(201);
       const created = response.json();
-      expect(created.content).toBe('<script>alert("XSS")</script>');
+      expect(created.message).toBe('<script>alert("XSS")</script>');
     });
   });
 });

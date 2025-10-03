@@ -4,7 +4,7 @@ import { withConn } from '../lib/db.js';
 
 const CreateSchema = z.object({
   grid_id: z.string().uuid(),
-  content: z.string().min(1)
+  message: z.string().min(1)
 });
 
 export function registerGridDiscussionRoutes(app: FastifyInstance) {
@@ -13,7 +13,7 @@ export function registerGridDiscussionRoutes(app: FastifyInstance) {
     try {
       const rows = await withConn(async (c) => {
         const { rows } = await c.query(
-          'SELECT id, grid_id, user_id, content, created_at FROM grid_discussions ORDER BY created_at DESC LIMIT 200'
+          'SELECT id, grid_id, user_id, message, created_at FROM grid_discussions ORDER BY created_at DESC LIMIT 200'
         );
         return rows;
       });
@@ -33,12 +33,12 @@ export function registerGridDiscussionRoutes(app: FastifyInstance) {
 
     try {
       const userId = req.user?.sub;
-      const { grid_id, content } = parsed.data;
+      const { grid_id, message } = parsed.data;
 
       const result = await withConn(async (c) => {
         const { rows } = await c.query(
-          'INSERT INTO grid_discussions (grid_id, user_id, content) VALUES ($1, $2, $3) RETURNING *',
-          [grid_id, userId, content]
+          'INSERT INTO grid_discussions (grid_id, user_id, message) VALUES ($1, $2, $3) RETURNING *',
+          [grid_id, userId, message]
         );
         return rows[0];
       }, userId);
