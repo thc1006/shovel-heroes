@@ -16,6 +16,7 @@ import { registerUserRoutes } from '../src/routes/users.js';
 import { registerAnnouncementRoutes } from '../src/routes/announcements.js';
 import { registerSupplyDonationRoutes } from '../src/routes/supply-donations.js';
 import { registerGridDiscussionRoutes } from '../src/routes/grid-discussions.js';
+import authRoutes from '../src/routes/auth.js';
 
 // Set test environment before importing env
 process.env.NODE_ENV = 'test';
@@ -67,6 +68,7 @@ export async function createTestApp(): Promise<TestContext> {
 
   // Register all routes
   registerHealth(app);
+  await app.register(authRoutes); // Auth routes with /auth prefix
   registerGrids(app);
   registerDisasterAreaRoutes(app);
   registerVolunteersRoutes(app);
@@ -123,15 +125,18 @@ export async function cleanDatabase(pool: Pool): Promise<void> {
 /**
  * Create a test user in the database
  */
-export async function createTestUser(pool: Pool, data?: Partial<{ id: string; name: string; email: string; phone: string }>): Promise<any> {
+export async function createTestUser(pool: Pool, data?: Partial<{ id: string; name: string; email: string; phone: string; role: string }>): Promise<any> {
   const id = data?.id || randomUUID();
   const display_name = data?.name || 'Test User';
   const email = data?.email || `test-${id.substring(0, 8)}@example.com`;
   const phone_number = data?.phone || null;
+  const role = data?.role || 'volunteer'; // Default role for test users
 
   const { rows } = await pool.query(
-    `INSERT INTO users (id, display_name, email, phone_number) VALUES ($1, $2, $3, $4) RETURNING id, display_name, display_name as name, email, phone_number, phone_number as phone`,
-    [id, display_name, email, phone_number]
+    `INSERT INTO users (id, display_name, email, phone_number, role, status)
+     VALUES ($1, $2, $3, $4, $5, 'active')
+     RETURNING id, display_name, display_name as name, email, phone_number, phone_number as phone, role`,
+    [id, display_name, email, phone_number, role]
   );
 
   return rows[0];
@@ -229,9 +234,16 @@ export async function createTestVolunteerRegistration(pool: Pool, gridId: string
  * Set app.user_id for RLS testing
  */
 export async function withUserId<T>(pool: Pool, userId: string, fn: (client: any) => Promise<T>): Promise<T> {
+  // Validate UUID format to prevent SQL injection
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_REGEX.test(userId)) {
+    throw new Error(`Invalid UUID format for withUserId: ${userId}`);
+  }
+
   const client = await pool.connect();
   try {
     // PostgreSQL SET LOCAL doesn't support parameterized queries
+    // String interpolation is safe here because we validated UUID format above
     await client.query(`SET LOCAL app.user_id = '${userId}'`);
     return await fn(client);
   } finally {

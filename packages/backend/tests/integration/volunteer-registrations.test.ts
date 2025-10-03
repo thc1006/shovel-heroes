@@ -36,9 +36,9 @@ describe('PUT /volunteer-registrations/:id - Status Updates', () => {
     );
     volunteerId = volunteerResult.rows[0].id;
 
-    // Create a test grid
+    // Create a test grid (using center_lat/center_lng columns)
     const gridResult = await context.pool.query(
-      'INSERT INTO grids (name, latitude, longitude) VALUES ($1, $2, $3) RETURNING id',
+      'INSERT INTO grids (name, center_lat, center_lng) VALUES ($1, $2, $3) RETURNING id',
       ['Test Grid', 23.5, 121.5]
     );
     gridId = gridResult.rows[0].id;

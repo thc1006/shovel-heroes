@@ -17,10 +17,10 @@ export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
     try {
       const rows = await withConn(async (c) => {
         const { rows } = await c.query(
-          'SELECT id, grid_id, volunteer_id, status, created_at FROM volunteer_registrations ORDER BY created_at DESC LIMIT 200'
+          'SELECT id, grid_id, volunteer_id, disaster_area_id, status, notes, volunteer_name, volunteer_phone, available_time, skills, equipment, created_at, updated_at FROM volunteer_registrations ORDER BY created_at DESC LIMIT 200'
         );
         return rows;
-      });
+      }); // No userId = public access with RLS public policy
       return rows;
     } catch (err: any) {
       app.log.error(err);
@@ -49,6 +49,10 @@ export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
       return reply.code(201).send(result);
     } catch (err: any) {
       app.log.error(err);
+      // Better error handling for FK constraints
+      if (err.code === '23503') {
+        return reply.code(400).send({ message: 'Invalid grid_id or volunteer_id reference' });
+      }
       return reply.code(500).send({ message: 'Internal error' });
     }
   });
@@ -67,7 +71,22 @@ export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
 
       // RLS policy ensures user can only update their own registration or admin can update any
       // The UPDATE policy checks: volunteer_id matches user OR user is admin
+      // We need to verify ownership before allowing the update
       const result = await withConn(async (c) => {
+        // First check if this registration belongs to the current user's volunteer record
+        const { rows: checkRows } = await c.query(
+          `SELECT vr.id FROM volunteer_registrations vr
+           JOIN volunteers v ON vr.volunteer_id = v.id
+           WHERE vr.id = $1 AND v.user_id = $2`,
+          [id, userId]
+        );
+
+        if (checkRows.length === 0) {
+          // User doesn't own this registration
+          return null;
+        }
+
+        // User owns the registration, proceed with update
         const { rows } = await c.query(
           'UPDATE volunteer_registrations SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
           [parsed.data.status, id]
@@ -92,8 +111,22 @@ export function registerVolunteerRegistrationRoutes(app: FastifyInstance) {
     try {
       const userId = req.user?.sub;
 
-      // RLS policy ensures user can only delete their own registration
+      // Check ownership before deleting (belt and suspenders with RLS)
       const rowCount = await withConn(async (c) => {
+        // First check if this registration belongs to the current user's volunteer record
+        const { rows: checkRows } = await c.query(
+          `SELECT vr.id FROM volunteer_registrations vr
+           JOIN volunteers v ON vr.volunteer_id = v.id
+           WHERE vr.id = $1 AND v.user_id = $2`,
+          [id, userId]
+        );
+
+        if (checkRows.length === 0) {
+          // User doesn't own this registration
+          return 0;
+        }
+
+        // User owns the registration, proceed with delete
         const result = await c.query(
           'DELETE FROM volunteer_registrations WHERE id = $1',
           [id]

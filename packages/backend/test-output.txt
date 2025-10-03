@@ -1,0 +1,3609 @@
+
+> shovel-backend@0.1.0 pretest
+> node scripts/setup-test-db.js
+
+[1m
+============================================================[0m
+[1m  Shovel Heroes - Test Database Setup[0m
+[1m============================================================
+[0m
+[0mConfiguration:[0m
+[0m  Host:     localhost:5432[0m
+[0m  User:     postgres[0m
+[0m  Database: shovelheroes_test
+[0m
+[34m[1/5] Checking PostgreSQL connection...[0m
+[32m✓ Connected to PostgreSQL: PostgreSQL 16.10 on x86_64-pc-linux-musl[0m
+[34m[2/5] Checking if shovelheroes_test database exists...[0m
+[0mDatabase shovelheroes_test exists, dropping it...[0m
+[32m✓ Dropped existing database: shovelheroes_test[0m
+[34m[3/5] Creating test database: shovelheroes_test...[0m
+[32m✓ Test database shovelheroes_test created successfully[0m
+[34m[4/5] Running migrations...[0m
+[0m> shovel-backend@0.1.0 migrate:up
+> node-pg-migrate up
+
+> Migrating files:
+> - 1696233600000_init
+> - 1696237200000_rls
+> - 1696240800000_audit
+> - 1696244400000_create_all_tables
+> - 1696248000000_expand_grids_table
+> - 1696251600000_add_announcement_fields
+> - 1696255200000_add_volunteer_registration_statuses
+> - 1696258800000_add_grid_manager_column
+> - 1696262400000_create_auth_system
+> - 1696266000000_add_grid_code_unique_constraint
+> - 1696269600000_auto_update_volunteer_count
+> - 1696273200000_complete_rls_policies
+> - 1696276800000_add_missing_columns
+> - 1696280400000_modular_rls
+### MIGRATION 1696233600000_init (UP) ###
+-- Users and grids (minimal)
+create table if not exists users (
+  id uuid primary key default gen_random_uuid(),
+  phone text,
+  display_name text
+);
+
+create table if not exists grids (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  area_id text
+);
+
+-- app.user_id GUC
+create schema if not exists app;
+create or replace function app.current_user_id() returns uuid language sql stable as $$
+  select nullif(current_setting('app.user_id', true), '')::uuid
+$$;
+
+-- Minimal seed
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696233600000_init', NOW());
+
+
+### MIGRATION 1696237200000_rls (UP) ###
+-- Enable row level security and policies
+alter table grids enable row level security;
+
+-- Example: allow select to all, but updates only to owner via a join (placeholder)
+-- For demo, we keep read-only public access; extend as needed.
+create policy grids_select_all on grids for select using (true);
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696237200000_rls', NOW());
+
+
+### MIGRATION 1696240800000_audit (UP) ###
+-- Append-only audit table with trigger
+create table if not exists audit_log (
+  id bigserial primary key,
+  at timestamptz not null default now(),
+  table_name text not null,
+  op text not null,
+  row_id text,
+  actor uuid,
+  diff jsonb
+);
+
+create or replace function app.audit_trigger() returns trigger language plpgsql as $$
+begin
+  insert into audit_log(table_name, op, row_id, actor, diff)
+  values (TG_TABLE_NAME, TG_OP, coalesce(NEW::text, OLD::text), app.current_user_id(), 
+          case when TG_OP='INSERT' then to_jsonb(NEW)
+               when TG_OP='UPDATE' then jsonb_build_object('old', to_jsonb(OLD), 'new', to_jsonb(NEW))
+               else to_jsonb(OLD) end);
+  return coalesce(NEW, OLD);
+end;
+$$;
+
+-- Example: add trigger to grids
+drop trigger if exists audit_grids on grids;
+create trigger audit_grids after insert or update or delete on grids
+for each row execute function app.audit_trigger();
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696240800000_audit', NOW());
+
+
+### MIGRATION 1696244400000_create_all_tables (UP) ###
+-- Migration 0004: Create all missing tables for Shovel Heroes
+-- Generated: 2025-10-02
+
+-- Disaster Areas table
+CREATE TABLE IF NOT EXISTS disaster_areas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  location TEXT,
+  severity TEXT CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+  status TEXT CHECK (status IN ('active', 'resolved', 'monitoring')) DEFAULT 'active',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Announcements table
+CREATE TABLE IF NOT EXISTS announcements (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  priority TEXT CHECK (priority IN ('low', 'normal', 'high', 'urgent')) DEFAULT 'normal',
+  published BOOLEAN DEFAULT FALSE,
+  author_id UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Volunteers table
+CREATE TABLE IF NOT EXISTS volunteers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id),
+  name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  skills TEXT[],
+  availability TEXT,
+  status TEXT CHECK (status IN ('available', 'assigned', 'unavailable')) DEFAULT 'available',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Volunteer Registrations table
+CREATE TABLE IF NOT EXISTS volunteer_registrations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  volunteer_id UUID REFERENCES volunteers(id),
+  grid_id UUID REFERENCES grids(id),
+  disaster_area_id UUID REFERENCES disaster_areas(id),
+  registration_date TIMESTAMPTZ DEFAULT NOW(),
+  status TEXT CHECK (status IN ('pending', 'confirmed', 'cancelled')) DEFAULT 'pending',
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Supply Donations table
+CREATE TABLE IF NOT EXISTS supply_donations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  donor_name TEXT NOT NULL,
+  donor_contact TEXT,
+  item_type TEXT NOT NULL,
+  quantity INTEGER DEFAULT 1,
+  unit TEXT,
+  disaster_area_id UUID REFERENCES disaster_areas(id),
+  grid_id UUID REFERENCES grids(id),
+  status TEXT CHECK (status IN ('pledged', 'received', 'distributed')) DEFAULT 'pledged',
+  delivery_date TIMESTAMPTZ,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Grid Discussions table
+CREATE TABLE IF NOT EXISTS grid_discussions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  grid_id UUID REFERENCES grids(id),
+  user_id UUID REFERENCES users(id),
+  parent_id UUID REFERENCES grid_discussions(id), -- for threaded discussions
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_disaster_areas_status ON disaster_areas(status);
+CREATE INDEX IF NOT EXISTS idx_announcements_published ON announcements(published);
+CREATE INDEX IF NOT EXISTS idx_volunteers_status ON volunteers(status);
+CREATE INDEX IF NOT EXISTS idx_volunteer_registrations_status ON volunteer_registrations(status);
+CREATE INDEX IF NOT EXISTS idx_supply_donations_status ON supply_donations(status);
+CREATE INDEX IF NOT EXISTS idx_grid_discussions_grid_id ON grid_discussions(grid_id);
+
+-- Add RLS policies for new tables
+ALTER TABLE disaster_areas ENABLE ROW LEVEL SECURITY;
+CREATE POLICY disaster_areas_select_all ON disaster_areas FOR SELECT USING (true);
+
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY announcements_select_published ON announcements FOR SELECT USING (published = true);
+
+ALTER TABLE volunteers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY volunteers_select_all ON volunteers FOR SELECT USING (true);
+
+ALTER TABLE volunteer_registrations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY volunteer_registrations_select_own ON volunteer_registrations
+  FOR SELECT USING (volunteer_id IN (SELECT id FROM volunteers WHERE user_id = app.current_user_id()));
+
+ALTER TABLE supply_donations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY supply_donations_select_all ON supply_donations FOR SELECT USING (true);
+
+ALTER TABLE grid_discussions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY grid_discussions_select_all ON grid_discussions FOR SELECT USING (true);
+
+-- Add audit triggers for new tables
+CREATE TRIGGER audit_disaster_areas AFTER INSERT OR UPDATE OR DELETE ON disaster_areas
+FOR EACH ROW EXECUTE FUNCTION app.audit_trigger();
+
+CREATE TRIGGER audit_announcements AFTER INSERT OR UPDATE OR DELETE ON announcements
+FOR EACH ROW EXECUTE FUNCTION app.audit_trigger();
+
+CREATE TRIGGER audit_volunteers AFTER INSERT OR UPDATE OR DELETE ON volunteers
+FOR EACH ROW EXECUTE FUNCTION app.audit_trigger();
+
+CREATE TRIGGER audit_volunteer_registrations AFTER INSERT OR UPDATE OR DELETE ON volunteer_registrations
+FOR EACH ROW EXECUTE FUNCTION app.audit_trigger();
+
+CREATE TRIGGER audit_supply_donations AFTER INSERT OR UPDATE OR DELETE ON supply_donations
+FOR EACH ROW EXECUTE FUNCTION app.audit_trigger();
+
+CREATE TRIGGER audit_grid_discussions AFTER INSERT OR UPDATE OR DELETE ON grid_discussions
+FOR EACH ROW EXECUTE FUNCTION app.audit_trigger();
+
+-- Insert some sample data for testing
+INSERT INTO disaster_areas (name, description, location, severity, status) VALUES
+  ('馬太鞍溪堰塞湖', '堰塞湖潰堤導致嚴重淹水', '花蓮縣光復鄉', 'critical', 'active'),
+  ('光復市區淹水區', '市區低窪地帶淹水', '花蓮縣光復鄉市區', 'high', 'monitoring')
+ON CONFLICT DO NOTHING;
+
+INSERT INTO announcements (title, content, priority, published) VALUES
+  ('志工招募中', '急需志工協助清淤工作，請有意願者報名', 'urgent', true),
+  ('物資需求公告', '目前需要清潔用具、飲用水、即食食品', 'high', true)
+ON CONFLICT DO NOTHING;
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696244400000_create_all_tables', NOW());
+
+
+### MIGRATION 1696248000000_expand_grids_table (UP) ###
+-- Migration 0005: Expand grids table for map functionality
+-- Generated: 2025-10-02
+-- Purpose: Add all necessary fields for map display and grid management
+
+-- Add new columns to grids table
+ALTER TABLE grids
+  ADD COLUMN IF NOT EXISTS code TEXT,
+  ADD COLUMN IF NOT EXISTS grid_type TEXT CHECK (grid_type IN ('mud_disposal', 'manpower', 'supply_storage', 'accommodation', 'food_area')),
+  ADD COLUMN IF NOT EXISTS status TEXT CHECK (status IN ('open', 'closed', 'completed', 'in_progress', 'preparing')) DEFAULT 'preparing',
+  ADD COLUMN IF NOT EXISTS center_lat DECIMAL(10, 7),
+  ADD COLUMN IF NOT EXISTS center_lng DECIMAL(10, 7),
+  ADD COLUMN IF NOT EXISTS bounds JSONB,
+  ADD COLUMN IF NOT EXISTS volunteer_needed INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS volunteer_registered INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS supplies_needed JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS meeting_point TEXT,
+  ADD COLUMN IF NOT EXISTS description TEXT,
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW(),
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_grids_status ON grids(status);
+CREATE INDEX IF NOT EXISTS idx_grids_grid_type ON grids(grid_type);
+CREATE INDEX IF NOT EXISTS idx_grids_location ON grids(center_lat, center_lng);
+
+-- Insert sample grid data for testing (光復地區)
+-- Grid coordinates are around 光復鄉 (23.875, 121.578)
+
+INSERT INTO grids (code, name, area_id, grid_type, status, center_lat, center_lng, bounds, volunteer_needed, volunteer_registered, meeting_point, description) VALUES
+  -- Manpower grids (人力任務)
+  ('A1', '光復市區清淤區A1', NULL, 'manpower', 'open', 23.8751, 121.5780,
+   '{"north": 23.8761, "south": 23.8741, "east": 121.5790, "west": 121.5770}'::jsonb,
+   20, 5, '光復鄉公所前廣場', '市區主要道路清淤作業'),
+
+  ('A2', '光復市區清淤區A2', NULL, 'manpower', 'open', 23.8770, 121.5800,
+   '{"north": 23.8780, "south": 23.8760, "east": 121.5810, "west": 121.5790}'::jsonb,
+   15, 12, '光復國小', '住宅區清淤作業'),
+
+  ('A3', '馬太鞍溪沿岸清理', NULL, 'manpower', 'open', 23.8800, 121.5820,
+   '{"north": 23.8810, "south": 23.8790, "east": 121.5830, "west": 121.5810}'::jsonb,
+   30, 8, '馬太鞍橋頭', '河岸清理與垃圾清運'),
+
+  ('A4', '農田復原區', NULL, 'manpower', 'in_progress', 23.8730, 121.5760,
+   '{"north": 23.8740, "south": 23.8720, "east": 121.5770, "west": 121.5750}'::jsonb,
+   25, 20, '光復糖廠入口', '農田淤泥清理'),
+
+  ('A5', '社區巷道清理', NULL, 'manpower', 'completed', 23.8720, 121.5790,
+   '{"north": 23.8730, "south": 23.8710, "east": 121.5800, "west": 121.5780}'::jsonb,
+   10, 10, '光復街45號', '已完成巷道清淤'),
+
+  -- Mud disposal sites (污泥暫置場)
+  ('B1', '光復暫置場1號', NULL, 'mud_disposal', 'open', 23.8820, 121.5850,
+   '{"north": 23.8830, "south": 23.8810, "east": 121.5860, "west": 121.5840}'::jsonb,
+   0, 0, '台9線旁空地', '可容納約500立方公尺'),
+
+  ('B2', '光復暫置場2號', NULL, 'mud_disposal', 'open', 23.8700, 121.5730,
+   '{"north": 23.8710, "south": 23.8690, "east": 121.5740, "west": 121.5720}'::jsonb,
+   0, 0, '光復工業區', '大型污泥暫置區'),
+
+  -- Supply storage (物資停放處)
+  ('C1', '光復物資集散中心', NULL, 'supply_storage', 'open', 23.8760, 121.5795,
+   '{"north": 23.8770, "south": 23.8750, "east": 121.5805, "west": 121.5785}'::jsonb,
+   0, 0, '光復國中體育館', '物資接收與分發'),
+
+  ('C2', '光復物資站2號', NULL, 'supply_storage', 'open', 23.8780, 121.5770,
+   '{"north": 23.8790, "south": 23.8770, "east": 121.5780, "west": 121.5760}'::jsonb,
+   0, 0, '光復社區活動中心', '備用物資站'),
+
+  -- Accommodation (住宿地點)
+  ('D1', '志工住宿點1', NULL, 'accommodation', 'open', 23.8740, 121.5785,
+   '{"north": 23.8750, "south": 23.8730, "east": 121.5795, "west": 121.5775}'::jsonb,
+   0, 0, '光復國小教室', '可容納50人'),
+
+  ('D2', '志工住宿點2', NULL, 'accommodation', 'open', 23.8790, 121.5810,
+   '{"north": 23.8800, "south": 23.8780, "east": 121.5820, "west": 121.5800}'::jsonb,
+   0, 0, '光復活動中心', '可容納30人'),
+
+  -- Food area (領吃食區域)
+  ('E1', '志工用餐區', NULL, 'food_area', 'open', 23.8755, 121.5782,
+   '{"north": 23.8765, "south": 23.8745, "east": 121.5792, "west": 121.5772}'::jsonb,
+   0, 0, '光復鄉公所', '提供三餐與飲水'),
+
+  ('E2', '備用用餐區', NULL, 'food_area', 'open', 23.8775, 121.5805,
+   '{"north": 23.8785, "south": 23.8765, "east": 121.5815, "west": 121.5795}'::jsonb,
+   0, 0, '光復教會', '備用餐點供應站')
+
+ON CONFLICT (id) DO NOTHING;
+
+-- Update supplies_needed for supply storage grids
+UPDATE grids
+SET supplies_needed = '[
+  {"name": "清潔用具", "quantity": 100, "received": 45, "unit": "組"},
+  {"name": "飲用水", "quantity": 500, "received": 320, "unit": "瓶"},
+  {"name": "即食食品", "quantity": 200, "received": 150, "unit": "份"}
+]'::jsonb
+WHERE grid_type = 'supply_storage';
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696248000000_expand_grids_table', NOW());
+
+
+### MIGRATION 1696251600000_add_announcement_fields (UP) ###
+-- Migration 0006: Add missing fields to announcements table
+-- This adds fields that the frontend expects but were missing from the schema
+
+-- Add new columns
+ALTER TABLE announcements
+  ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'safety'
+    CHECK (category IN ('safety', 'equipment', 'center', 'external', 'contact')),
+  ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS "order" INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS contact_phone TEXT,
+  ADD COLUMN IF NOT EXISTS external_links JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS priority TEXT DEFAULT 'normal'
+    CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+  ADD COLUMN IF NOT EXISTS published BOOLEAN DEFAULT TRUE;
+
+-- Set default category for existing announcements
+UPDATE announcements
+SET category = 'center'
+WHERE category IS NULL;
+
+-- Create indexes for filtering
+CREATE INDEX IF NOT EXISTS idx_announcements_category ON announcements(category);
+CREATE INDEX IF NOT EXISTS idx_announcements_pinned ON announcements(is_pinned);
+CREATE INDEX IF NOT EXISTS idx_announcements_published ON announcements(published);
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696251600000_add_announcement_fields', NOW());
+
+
+### MIGRATION 1696255200000_add_volunteer_registration_statuses (UP) ###
+-- Migration 0008: Add 'arrived' and 'completed' statuses to volunteer_registrations
+-- Generated: 2025-10-02
+
+-- Drop the existing CHECK constraint
+ALTER TABLE volunteer_registrations
+DROP CONSTRAINT IF EXISTS volunteer_registrations_status_check;
+
+-- Add new CHECK constraint with all status values
+ALTER TABLE volunteer_registrations
+ADD CONSTRAINT volunteer_registrations_status_check
+CHECK (status IN ('pending', 'confirmed', 'arrived', 'completed', 'cancelled'));
+
+-- Add updated_at column if it doesn't exist
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT FROM information_schema.columns
+    WHERE table_name = 'volunteer_registrations' AND column_name = 'updated_at'
+  ) THEN
+    ALTER TABLE volunteer_registrations
+    ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW();
+  END IF;
+END $$;
+
+-- Create trigger to auto-update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_volunteer_registrations_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS volunteer_registrations_updated_at ON volunteer_registrations;
+CREATE TRIGGER volunteer_registrations_updated_at
+  BEFORE UPDATE ON volunteer_registrations
+  FOR EACH ROW
+  EXECUTE FUNCTION update_volunteer_registrations_updated_at();
+
+-- Add RLS policy for UPDATE operations
+-- Users can update their own registrations OR admins can update any
+-- Note: Simplified version without app.is_admin() function - will be added in auth migration
+DROP POLICY IF EXISTS volunteer_registrations_update_own ON volunteer_registrations;
+CREATE POLICY volunteer_registrations_update_own ON volunteer_registrations
+  FOR UPDATE
+  USING (
+    volunteer_id IN (SELECT id FROM volunteers WHERE user_id = app.current_user_id())
+  )
+  WITH CHECK (
+    volunteer_id IN (SELECT id FROM volunteers WHERE user_id = app.current_user_id())
+  );
+
+-- Add comment for documentation
+COMMENT ON CONSTRAINT volunteer_registrations_status_check ON volunteer_registrations IS
+'Valid status values: pending (initial), confirmed (admin approved), arrived (checked in), completed (task done), cancelled (user or admin cancelled)';
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696255200000_add_volunteer_registration_statuses', NOW());
+
+
+### MIGRATION 1696258800000_add_grid_manager_column (UP) ###
+-- Migration 0010: Add grid_manager_id to grids table
+-- Purpose: Support RBAC for grid managers to view volunteer phone numbers
+-- Created: 2025-10-03
+
+-- Add grid_manager_id column to grids table
+ALTER TABLE grids
+  ADD COLUMN IF NOT EXISTS grid_manager_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+-- Create index for better query performance
+CREATE INDEX IF NOT EXISTS idx_grids_manager ON grids(grid_manager_id);
+
+-- Add comment for documentation
+COMMENT ON COLUMN grids.grid_manager_id IS 'User ID of the grid manager (ngo_coordinator role) who can view volunteer phone numbers for this grid';
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696258800000_add_grid_manager_column', NOW());
+
+
+### MIGRATION 1696262400000_create_auth_system (UP) ###
+-- ============================================
+-- 鏟子英雄 - 認證系統資料庫 Schema
+-- Migration: 0011_create_auth_system
+-- Created: 2025-10-02
+-- Description: ALTER existing users table + create auth tables
+-- ============================================
+
+-- 啟用必要的擴充功能
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ============================================
+-- 1. 更新現有 users 表
+-- ============================================
+
+-- 新增認證欄位
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20) UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255) UNIQUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+
+-- 新增角色與狀態
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) CHECK (role IN ('volunteer', 'victim', 'ngo_coordinator', 'regional_admin', 'data_analyst', 'super_admin'));
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'pending_verification', 'inactive'));
+
+-- 個資欄位（加密存儲）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name_encrypted BYTEA;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS emergency_contact_encrypted BYTEA;
+
+-- 驗證狀態
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS identity_verified BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_by UUID REFERENCES users(id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP WITH TIME ZONE;
+
+-- 雙因素認證
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS backup_codes TEXT[];
+
+-- 登入安全
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_ip INET;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITH TIME ZONE;
+
+-- 時間戳記
+ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- 索引優化
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone_number) WHERE phone_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+-- 自動更新 updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+CREATE TRIGGER update_users_updated_at
+  BEFORE UPDATE ON users
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- 2. 志工個人檔案
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS volunteer_profiles (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  skills TEXT[] DEFAULT '{}',
+  organization VARCHAR(255),
+  total_hours DECIMAL(10,2) DEFAULT 0,
+  total_tasks INT DEFAULT 0,
+  completed_tasks INT DEFAULT 0,
+  rating DECIMAL(3,2),
+  review_count INT DEFAULT 0,
+  preferred_areas TEXT[],
+  availability JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_volunteer_skills ON volunteer_profiles USING GIN(skills);
+CREATE INDEX IF NOT EXISTS idx_volunteer_organization ON volunteer_profiles(organization);
+
+DROP TRIGGER IF EXISTS update_volunteer_profiles_updated_at ON volunteer_profiles;
+CREATE TRIGGER update_volunteer_profiles_updated_at
+  BEFORE UPDATE ON volunteer_profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- 3. 受災戶個人檔案
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS victim_profiles (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  address_encrypted BYTEA,
+  latitude DECIMAL(10,8),
+  longitude DECIMAL(11,8),
+  damage_description TEXT,
+  damage_level VARCHAR(20) CHECK (damage_level IN ('minor', 'moderate', 'severe', 'critical')),
+  damage_photos TEXT[],
+  verification_status VARCHAR(20) DEFAULT 'pending' CHECK (verification_status IN ('pending', 'approved', 'rejected', 'need_more_info')),
+  verification_notes TEXT,
+  reviewed_by UUID REFERENCES users(id),
+  reviewed_at TIMESTAMP WITH TIME ZONE,
+  needs_met BOOLEAN DEFAULT FALSE,
+  priority_level INT DEFAULT 3 CHECK (priority_level BETWEEN 1 AND 5),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_victim_status ON victim_profiles(verification_status);
+CREATE INDEX IF NOT EXISTS idx_victim_priority ON victim_profiles(priority_level);
+CREATE INDEX IF NOT EXISTS idx_victim_location ON victim_profiles(latitude, longitude);
+
+DROP TRIGGER IF EXISTS update_victim_profiles_updated_at ON victim_profiles;
+CREATE TRIGGER update_victim_profiles_updated_at
+  BEFORE UPDATE ON victim_profiles
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- 4. OTP 驗證碼管理
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS otp_codes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  identifier VARCHAR(255) NOT NULL,
+  code_hash VARCHAR(255) NOT NULL,
+  purpose VARCHAR(50) NOT NULL CHECK (purpose IN ('login', 'reset_password', '2fa', 'phone_verification', 'email_verification')),
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  used_at TIMESTAMP WITH TIME ZONE,
+  attempts INT DEFAULT 0,
+  max_attempts INT DEFAULT 5,
+  ip_address INET,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_otp_identifier ON otp_codes(identifier, purpose, expires_at);
+CREATE INDEX IF NOT EXISTS idx_otp_expires ON otp_codes(expires_at);
+
+-- ============================================
+-- 5. Session 管理
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash VARCHAR(255) NOT NULL UNIQUE,
+  refresh_token_hash VARCHAR(255) UNIQUE,
+  ip_address INET,
+  user_agent TEXT,
+  device_fingerprint VARCHAR(255),
+  device_trusted BOOLEAN DEFAULT FALSE,
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  refresh_expires_at TIMESTAMP WITH TIME ZONE,
+  last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+-- ============================================
+-- 6. 權限管理
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(100) NOT NULL UNIQUE,
+  description TEXT,
+  resource_type VARCHAR(50),
+  action VARCHAR(50),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  role VARCHAR(20) NOT NULL,
+  permission_id UUID NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(role, permission_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role ON role_permissions(role);
+
+CREATE TABLE IF NOT EXISTS user_permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission_id UUID NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  granted BOOLEAN DEFAULT TRUE,
+  granted_by UUID REFERENCES users(id),
+  granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE,
+  UNIQUE(user_id, permission_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+
+-- ============================================
+-- 7. 稽核日誌
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id),
+  user_role VARCHAR(20),
+  action VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(50),
+  resource_id UUID,
+  old_value JSONB,
+  new_value JSONB,
+  ip_address INET,
+  user_agent TEXT,
+  request_method VARCHAR(10),
+  request_path TEXT,
+  request_data JSONB,
+  response_status INT,
+  is_suspicious BOOLEAN DEFAULT FALSE,
+  risk_level VARCHAR(20) CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_suspicious ON audit_logs(is_suspicious) WHERE is_suspicious = TRUE;
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+
+-- ============================================
+-- 8. 登入歷史記錄
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS login_history (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  success BOOLEAN NOT NULL,
+  failure_reason VARCHAR(100),
+  ip_address INET,
+  user_agent TEXT,
+  device_type VARCHAR(50),
+  browser VARCHAR(50),
+  os VARCHAR(50),
+  location_country VARCHAR(2),
+  location_city VARCHAR(100),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_login_history_ip ON login_history(ip_address);
+CREATE INDEX IF NOT EXISTS idx_login_history_failed ON login_history(success) WHERE success = FALSE;
+
+-- ============================================
+-- 9. 預設權限資料
+-- ============================================
+
+INSERT INTO permissions (name, description, resource_type, action) VALUES
+  ('view_own_profile', '查看自己的個人資料', 'volunteer', 'read'),
+  ('update_own_profile', '更新自己的個人資料', 'volunteer', 'update'),
+  ('view_tasks', '查看任務列表', 'task', 'read'),
+  ('accept_task', '接受任務', 'task', 'update'),
+  ('upload_task_photo', '上傳任務照片', 'task', 'create'),
+  ('create_help_request', '建立救援請求', 'help_request', 'create'),
+  ('view_own_requests', '查看自己的請求', 'help_request', 'read'),
+  ('update_own_request', '更新自己的請求', 'help_request', 'update'),
+  ('view_all_volunteers', '查看所有志工', 'volunteer', 'read'),
+  ('assign_tasks', '分配任務', 'task', 'create'),
+  ('update_tasks', '更新任務狀態', 'task', 'update'),
+  ('view_all_requests', '查看所有救援請求', 'help_request', 'read'),
+  ('approve_victim', '審核受災戶', 'victim', 'update'),
+  ('manage_users', '管理使用者', 'user', '*'),
+  ('view_audit_logs', '查看稽核日誌', 'audit', 'read'),
+  ('manage_permissions', '管理權限', 'permission', '*'),
+  ('export_data', '匯出資料', 'data', 'read')
+ON CONFLICT (name) DO NOTHING;
+
+-- 角色預設權限
+INSERT INTO role_permissions (role, permission_id)
+SELECT 'volunteer', id FROM permissions WHERE name IN (
+  'view_own_profile', 'update_own_profile', 'view_tasks', 'accept_task', 'upload_task_photo'
+)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role, permission_id)
+SELECT 'victim', id FROM permissions WHERE name IN (
+  'view_own_profile', 'update_own_profile', 'create_help_request', 'view_own_requests', 'update_own_request'
+)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role, permission_id)
+SELECT 'ngo_coordinator', id FROM permissions WHERE name IN (
+  'view_own_profile', 'update_own_profile',
+  'view_all_volunteers', 'assign_tasks', 'update_tasks',
+  'view_all_requests', 'approve_victim'
+)
+ON CONFLICT DO NOTHING;
+
+INSERT INTO role_permissions (role, permission_id)
+SELECT 'super_admin', id FROM permissions
+ON CONFLICT DO NOTHING;
+
+-- ============================================
+-- 10. RLS (Row Level Security) 政策
+-- ============================================
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE volunteer_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE victim_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- 使用者只能查看自己的資料
+DROP POLICY IF EXISTS users_self_access ON users;
+CREATE POLICY users_self_access ON users
+  FOR SELECT
+  USING (id = current_setting('app.user_id', true)::UUID);
+
+-- 管理員可以查看所有使用者
+DROP POLICY IF EXISTS users_admin_access ON users;
+CREATE POLICY users_admin_access ON users
+  FOR ALL
+  USING (
+    EXISTS (
+      SELECT 1 FROM users u
+      WHERE u.id = current_setting('app.user_id', true)::UUID
+      AND u.role IN ('super_admin', 'ngo_coordinator')
+    )
+  );
+
+-- 志工只能查看自己的 profile
+DROP POLICY IF EXISTS volunteer_self_access ON volunteer_profiles;
+CREATE POLICY volunteer_self_access ON volunteer_profiles
+  FOR ALL
+  USING (user_id = current_setting('app.user_id', true)::UUID);
+
+-- NGO 協調者可以查看所有志工 profile
+DROP POLICY IF EXISTS volunteer_ngo_access ON volunteer_profiles;
+CREATE POLICY volunteer_ngo_access ON volunteer_profiles
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM users u
+      WHERE u.id = current_setting('app.user_id', true)::UUID
+      AND u.role IN ('ngo_coordinator', 'super_admin')
+    )
+  );
+
+-- ============================================
+-- 11. 輔助函數
+-- ============================================
+
+CREATE OR REPLACE FUNCTION encrypt_pii(plaintext TEXT, secret TEXT DEFAULT 'your-secret-key')
+RETURNS BYTEA AS $$
+BEGIN
+  RETURN pgp_sym_encrypt(plaintext, secret);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION decrypt_pii(ciphertext BYTEA, secret TEXT DEFAULT 'your-secret-key')
+RETURNS TEXT AS $$
+BEGIN
+  RETURN pgp_sym_decrypt(ciphertext, secret);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION user_has_permission(
+  p_user_id UUID,
+  p_permission_name VARCHAR
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM users u
+    LEFT JOIN role_permissions rp ON rp.role = u.role
+    LEFT JOIN permissions p ON p.id = rp.permission_id
+    LEFT JOIN user_permissions up ON up.user_id = u.id AND up.permission_id = p.id
+    WHERE u.id = p_user_id
+    AND p.name = p_permission_name
+    AND (up.granted IS NULL OR up.granted = TRUE)
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696262400000_create_auth_system', NOW());
+
+
+### MIGRATION 1696266000000_add_grid_code_unique_constraint (UP) ###
+-- Migration 0012: Add UNIQUE constraint to grids.code
+-- Generated: 2025-10-02
+-- Purpose: Ensure grid codes are unique for conflict detection
+
+-- Add UNIQUE constraint to code field
+-- This will enable proper 409 Conflict responses when duplicate codes are submitted
+ALTER TABLE grids
+  ADD CONSTRAINT grids_code_key UNIQUE (code);
+
+-- Create index for code lookups (automatically created by UNIQUE constraint, but explicit for clarity)
+-- CREATE UNIQUE INDEX IF NOT EXISTS idx_grids_code ON grids(code);
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696266000000_add_grid_code_unique_constraint', NOW());
+
+
+### MIGRATION 1696269600000_auto_update_volunteer_count (UP) ###
+-- Migration 0013: 自動更新網格志工人數
+-- Description: 當志工報名或取消時，自動增減 grids.volunteer_registered
+-- Created: 2025-10-02
+
+-- 建立觸發函數
+CREATE OR REPLACE FUNCTION update_grid_volunteer_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- 新增報名：volunteer_registered +1
+    UPDATE grids
+    SET volunteer_registered = volunteer_registered + 1,
+        updated_at = NOW()
+    WHERE id = NEW.grid_id;
+    RETURN NEW;
+
+  ELSIF TG_OP = 'DELETE' THEN
+    -- 取消報名：volunteer_registered -1（不小於0）
+    UPDATE grids
+    SET volunteer_registered = GREATEST(0, volunteer_registered - 1),
+        updated_at = NOW()
+    WHERE id = OLD.grid_id;
+    RETURN OLD;
+
+  ELSIF TG_OP = 'UPDATE' THEN
+    -- 如果 grid_id 改變（罕見情況）
+    IF OLD.grid_id != NEW.grid_id THEN
+      -- 舊網格 -1
+      UPDATE grids
+      SET volunteer_registered = GREATEST(0, volunteer_registered - 1),
+          updated_at = NOW()
+      WHERE id = OLD.grid_id;
+
+      -- 新網格 +1
+      UPDATE grids
+      SET volunteer_registered = volunteer_registered + 1,
+          updated_at = NOW()
+      WHERE id = NEW.grid_id;
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 建立觸發器
+DROP TRIGGER IF EXISTS trg_volunteer_registration_count ON volunteer_registrations;
+
+CREATE TRIGGER trg_volunteer_registration_count
+AFTER INSERT OR DELETE OR UPDATE OF grid_id ON volunteer_registrations
+FOR EACH ROW
+EXECUTE FUNCTION update_grid_volunteer_count();
+
+-- 驗證現有資料的計數正確性（一次性修復）
+UPDATE grids g
+SET volunteer_registered = (
+  SELECT COUNT(*)
+  FROM volunteer_registrations vr
+  WHERE vr.grid_id = g.id
+);
+
+-- 驗證觸發器安裝成功
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'trg_volunteer_registration_count'
+  ) THEN
+    RAISE NOTICE 'Trigger trg_volunteer_registration_count created successfully';
+  ELSE
+    RAISE EXCEPTION 'Failed to create trigger trg_volunteer_registration_count';
+  END IF;
+END $$;
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696269600000_auto_update_volunteer_count', NOW());
+
+
+### MIGRATION 1696273200000_complete_rls_policies (UP) ###
+-- ============================================
+-- Migration 0009: Comprehensive RLS Policies
+-- Created: 2025-10-02
+-- Description: Complete Row-Level Security policies for all tables
+-- ============================================
+--
+-- This migration establishes comprehensive RLS policies across all tables
+-- following role-based access control principles:
+--   - volunteer: Basic user with task access
+--   - victim: Request help and view own data
+--   - ngo_coordinator: Manage volunteers and tasks
+--   - regional_admin: Regional oversight and management
+--   - data_analyst: Read-only analytics access
+--   - super_admin: Full system access
+-- ============================================
+
+-- ============================================
+-- Helper Functions
+-- ============================================
+
+-- Function to check if user has one of the required roles
+CREATE OR REPLACE FUNCTION user_has_role(required_roles TEXT[])
+RETURNS BOOLEAN AS $$
+DECLARE
+  current_user_id UUID;
+  current_user_role TEXT;
+BEGIN
+  -- Get current user ID from session context
+  BEGIN
+    current_user_id := current_setting('app.user_id', true)::UUID;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN FALSE;
+  END;
+
+  -- Return false if no user context
+  IF current_user_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  -- Get user role
+  SELECT role INTO current_user_role
+  FROM users
+  WHERE id = current_user_id;
+
+  -- Check if user role is in required roles
+  RETURN current_user_role = ANY(required_roles);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Function to get current user ID safely
+CREATE OR REPLACE FUNCTION get_current_user_id()
+RETURNS UUID AS $$
+BEGIN
+  RETURN current_setting('app.user_id', true)::UUID;
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Function to check if user is admin (coordinator or above)
+CREATE OR REPLACE FUNCTION is_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin']);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- ============================================
+-- 1. GRIDS Table Policies
+-- ============================================
+
+-- Drop existing overly permissive policy
+DROP POLICY IF EXISTS grids_select_all ON grids;
+
+-- Enable RLS
+ALTER TABLE grids ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Everyone can view grids (public map data)
+CREATE POLICY grids_select_public ON grids
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Only coordinators and admins
+CREATE POLICY grids_insert_admin ON grids
+  FOR INSERT
+  WITH CHECK (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- UPDATE: Only coordinators and admins
+CREATE POLICY grids_update_admin ON grids
+  FOR UPDATE
+  USING (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY grids_delete_super_admin ON grids
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 2. ANNOUNCEMENTS Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies
+DROP POLICY IF EXISTS announcements_select_published ON announcements;
+
+-- SELECT: Everyone can view published announcements
+CREATE POLICY announcements_select_public ON announcements
+  FOR SELECT
+  USING (published = true OR is_admin());
+
+-- INSERT: Only coordinators and admins can create
+CREATE POLICY announcements_insert_admin ON announcements
+  FOR INSERT
+  WITH CHECK (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- UPDATE: Author or admins can update
+CREATE POLICY announcements_update_author_or_admin ON announcements
+  FOR UPDATE
+  USING (
+    author_id = get_current_user_id() OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Author or super admin can delete
+CREATE POLICY announcements_delete_author_or_super_admin ON announcements
+  FOR DELETE
+  USING (
+    author_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 3. VOLUNTEERS Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE volunteers ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies
+DROP POLICY IF EXISTS volunteers_select_all ON volunteers;
+
+-- SELECT: Self or coordinators/admins
+CREATE POLICY volunteers_select_self_or_admin ON volunteers
+  FOR SELECT
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin', 'data_analyst'])
+  );
+
+-- INSERT: Only self (authenticated users can register as volunteers)
+CREATE POLICY volunteers_insert_self ON volunteers
+  FOR INSERT
+  WITH CHECK (
+    user_id = get_current_user_id()
+  );
+
+-- UPDATE: Only self can update own profile
+CREATE POLICY volunteers_update_self ON volunteers
+  FOR UPDATE
+  USING (
+    user_id = get_current_user_id()
+  );
+
+-- DELETE: Self or super admin
+CREATE POLICY volunteers_delete_self_or_super_admin ON volunteers
+  FOR DELETE
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 4. VOLUNTEER_REGISTRATIONS Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE volunteer_registrations ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies
+DROP POLICY IF EXISTS volunteer_registrations_select_own ON volunteer_registrations;
+
+-- SELECT: Volunteer (own registrations) or coordinators
+CREATE POLICY volunteer_registrations_select_own_or_admin ON volunteer_registrations
+  FOR SELECT
+  USING (
+    volunteer_id IN (
+      SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+    ) OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin', 'data_analyst'])
+  );
+
+-- INSERT: Volunteers can register themselves
+CREATE POLICY volunteer_registrations_insert_own ON volunteer_registrations
+  FOR INSERT
+  WITH CHECK (
+    volunteer_id IN (
+      SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+    )
+  );
+
+-- UPDATE: Volunteer (own, if pending) or coordinators (to approve/reject)
+CREATE POLICY volunteer_registrations_update_own_or_admin ON volunteer_registrations
+  FOR UPDATE
+  USING (
+    (
+      volunteer_id IN (
+        SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+      ) AND status = 'pending'
+    ) OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Volunteer (own pending registrations) or super admin
+CREATE POLICY volunteer_registrations_delete_own_or_super_admin ON volunteer_registrations
+  FOR DELETE
+  USING (
+    (
+      volunteer_id IN (
+        SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+      ) AND status = 'pending'
+    ) OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 5. DISASTER_AREAS Table Policies
+-- ============================================
+
+-- Enable RLS (already enabled in 0004, but ensure it)
+ALTER TABLE disaster_areas ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies
+DROP POLICY IF EXISTS disaster_areas_select_all ON disaster_areas;
+
+-- SELECT: Everyone can view disaster areas (public safety info)
+CREATE POLICY disaster_areas_select_public ON disaster_areas
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Only coordinators and admins
+CREATE POLICY disaster_areas_insert_admin ON disaster_areas
+  FOR INSERT
+  WITH CHECK (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- UPDATE: Only coordinators and admins
+CREATE POLICY disaster_areas_update_admin ON disaster_areas
+  FOR UPDATE
+  USING (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY disaster_areas_delete_super_admin ON disaster_areas
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 6. SUPPLY_DONATIONS Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE supply_donations ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies
+DROP POLICY IF EXISTS supply_donations_select_all ON supply_donations;
+
+-- SELECT: Everyone can view donations (public transparency)
+CREATE POLICY supply_donations_select_public ON supply_donations
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Anyone authenticated can donate
+CREATE POLICY supply_donations_insert_authenticated ON supply_donations
+  FOR INSERT
+  WITH CHECK (
+    get_current_user_id() IS NOT NULL
+  );
+
+-- UPDATE: Creator (via donor_contact matching user email) or coordinators
+-- Note: This is a simplified check. In production, you'd track creator_id separately
+CREATE POLICY supply_donations_update_admin ON supply_donations
+  FOR UPDATE
+  USING (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY supply_donations_delete_super_admin ON supply_donations
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 7. GRID_DISCUSSIONS Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE grid_discussions ENABLE ROW LEVEL SECURITY;
+
+-- Drop old policies
+DROP POLICY IF EXISTS grid_discussions_select_all ON grid_discussions;
+
+-- SELECT: Everyone can view discussions (public forum)
+CREATE POLICY grid_discussions_select_public ON grid_discussions
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Anyone authenticated can post
+CREATE POLICY grid_discussions_insert_authenticated ON grid_discussions
+  FOR INSERT
+  WITH CHECK (
+    get_current_user_id() IS NOT NULL AND
+    user_id = get_current_user_id()
+  );
+
+-- UPDATE: Only author can update own messages
+CREATE POLICY grid_discussions_update_author ON grid_discussions
+  FOR UPDATE
+  USING (
+    user_id = get_current_user_id()
+  );
+
+-- DELETE: Author or super admin
+CREATE POLICY grid_discussions_delete_author_or_super_admin ON grid_discussions
+  FOR DELETE
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 8. OTP_CODES Table Policies
+-- ============================================
+-- OTP codes should have strict access control
+
+-- Enable RLS
+ALTER TABLE otp_codes ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Only system (no direct user access)
+-- This prevents users from reading OTP codes directly
+CREATE POLICY otp_codes_no_select ON otp_codes
+  FOR SELECT
+  USING (false);
+
+-- INSERT: Only through authentication system
+-- In practice, this will be handled by SECURITY DEFINER functions
+CREATE POLICY otp_codes_no_direct_insert ON otp_codes
+  FOR INSERT
+  WITH CHECK (false);
+
+-- UPDATE: Only through authentication system
+CREATE POLICY otp_codes_no_update ON otp_codes
+  FOR UPDATE
+  USING (false);
+
+-- DELETE: Only super admin for cleanup
+CREATE POLICY otp_codes_delete_super_admin ON otp_codes
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 9. LOGIN_HISTORY Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE login_history ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Users can view own login history, admins can view all
+CREATE POLICY login_history_select_self_or_admin ON login_history
+  FOR SELECT
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin', 'regional_admin'])
+  );
+
+-- INSERT: Only through authentication system (SECURITY DEFINER functions)
+CREATE POLICY login_history_no_direct_insert ON login_history
+  FOR INSERT
+  WITH CHECK (false);
+
+-- UPDATE: No updates allowed
+CREATE POLICY login_history_no_update ON login_history
+  FOR UPDATE
+  USING (false);
+
+-- DELETE: Only super admin for data retention
+CREATE POLICY login_history_delete_super_admin ON login_history
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 10. PERMISSIONS and ROLE_PERMISSIONS Tables
+-- ============================================
+
+-- Enable RLS on permissions table
+ALTER TABLE permissions ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Everyone can view available permissions
+CREATE POLICY permissions_select_all ON permissions
+  FOR SELECT
+  USING (true);
+
+-- INSERT/UPDATE/DELETE: Only super admin
+CREATE POLICY permissions_modify_super_admin ON permissions
+  FOR ALL
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- Enable RLS on role_permissions table
+ALTER TABLE role_permissions ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Everyone can view role permissions mapping
+CREATE POLICY role_permissions_select_all ON role_permissions
+  FOR SELECT
+  USING (true);
+
+-- INSERT/UPDATE/DELETE: Only super admin
+CREATE POLICY role_permissions_modify_super_admin ON role_permissions
+  FOR ALL
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- 11. USER_PERMISSIONS Table Policies
+-- ============================================
+
+-- Enable RLS
+ALTER TABLE user_permissions ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Users can view own permissions, admins can view all
+CREATE POLICY user_permissions_select_self_or_admin ON user_permissions
+  FOR SELECT
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin', 'regional_admin'])
+  );
+
+-- INSERT/UPDATE/DELETE: Only super admin can manage user permissions
+CREATE POLICY user_permissions_modify_super_admin ON user_permissions
+  FOR ALL
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- End of Migration 0009
+-- ============================================
+
+-- Grant execute permissions on helper functions to authenticated users
+GRANT EXECUTE ON FUNCTION user_has_role(TEXT[]) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION get_current_user_id() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION is_admin() TO PUBLIC;
+
+-- Create index on users.role for faster role checks
+CREATE INDEX IF NOT EXISTS idx_users_role_lookup ON users(role) WHERE role IS NOT NULL;
+
+-- Add comment documenting the RLS policy structure
+COMMENT ON FUNCTION user_has_role IS 'Check if current user has one of the specified roles. Used in RLS policies.';
+COMMENT ON FUNCTION get_current_user_id IS 'Safely get current user ID from app.user_id session variable.';
+COMMENT ON FUNCTION is_admin IS 'Check if current user is an admin (coordinator or above).';
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696273200000_complete_rls_policies', NOW());
+
+
+### MIGRATION 1696276800000_add_missing_columns (UP) ###
+-- Migration 0013: Add missing columns to align with BACKEND_API_INTEGRATION_GUIDE.md
+-- Purpose: Add contact_info, risks_notes to grids table and volunteer fields to volunteer_registrations
+-- Created: 2025-10-03
+-- Reference: BACKEND_API_INTEGRATION_GUIDE.md lines 850-878
+
+-- ============================================================================
+-- GRIDS TABLE: Add contact and risk information
+-- ============================================================================
+
+-- Add contact_info column (sensitive data for grid coordinators)
+ALTER TABLE grids
+  ADD COLUMN IF NOT EXISTS contact_info VARCHAR(255);
+
+-- Add risks_notes column for safety information
+ALTER TABLE grids
+  ADD COLUMN IF NOT EXISTS risks_notes TEXT;
+
+-- Add comments for documentation
+COMMENT ON COLUMN grids.contact_info IS 'Contact information for grid coordinators - SENSITIVE DATA';
+COMMENT ON COLUMN grids.risks_notes IS 'Risk notes and safety information for the grid location';
+
+-- ============================================================================
+-- VOLUNTEER_REGISTRATIONS TABLE: Add volunteer-specific fields
+-- ============================================================================
+
+-- Add volunteer_name column (if not exists)
+ALTER TABLE volunteer_registrations
+  ADD COLUMN IF NOT EXISTS volunteer_name VARCHAR(255);
+
+-- Add volunteer_phone column (sensitive data)
+ALTER TABLE volunteer_registrations
+  ADD COLUMN IF NOT EXISTS volunteer_phone VARCHAR(50);
+
+-- Add available_time column for volunteer availability
+ALTER TABLE volunteer_registrations
+  ADD COLUMN IF NOT EXISTS available_time TEXT;
+
+-- Add skills array column
+ALTER TABLE volunteer_registrations
+  ADD COLUMN IF NOT EXISTS skills TEXT[];
+
+-- Add equipment array column
+ALTER TABLE volunteer_registrations
+  ADD COLUMN IF NOT EXISTS equipment TEXT[];
+
+-- Add comments for documentation
+COMMENT ON COLUMN volunteer_registrations.volunteer_name IS 'Name of the volunteer (may differ from user display_name)';
+COMMENT ON COLUMN volunteer_registrations.volunteer_phone IS 'Volunteer phone number - SENSITIVE DATA, only visible to grid managers';
+COMMENT ON COLUMN volunteer_registrations.available_time IS 'Time availability for volunteer work (e.g., "週末全天", "平日晚上")';
+COMMENT ON COLUMN volunteer_registrations.skills IS 'Array of volunteer skills (e.g., ["重機械操作", "醫療", "烹飪"])';
+COMMENT ON COLUMN volunteer_registrations.equipment IS 'Array of equipment volunteer can bring (e.g., ["鏟子", "手套", "水桶"])';
+
+-- ============================================================================
+-- INDEXES: Create indexes for better query performance
+-- ============================================================================
+
+-- No additional indexes needed for these text/array columns
+-- Array columns support GIN indexes if needed in the future:
+-- CREATE INDEX IF NOT EXISTS idx_volunteer_registrations_skills ON volunteer_registrations USING GIN (skills);
+-- CREATE INDEX IF NOT EXISTS idx_volunteer_registrations_equipment ON volunteer_registrations USING GIN (equipment);
+
+-- ============================================================================
+-- RLS POLICIES: Update policies for sensitive data
+-- ============================================================================
+
+-- Note: RLS policies for grids.contact_info should be added in 0012_complete_rls_policies.sql
+-- Grid managers (ngo_coordinator role) should be able to view contact_info for their assigned grids
+
+-- Note: RLS policies for volunteer_registrations.volunteer_phone should be added in 0012_complete_rls_policies.sql
+-- Only grid managers can view volunteer phone numbers for their assigned grids
+
+-- ============================================================================
+-- VERIFICATION QUERIES (for manual testing)
+-- ============================================================================
+
+-- Verify grids table columns
+-- SELECT column_name, data_type, character_maximum_length
+-- FROM information_schema.columns
+-- WHERE table_name = 'grids'
+-- AND column_name IN ('contact_info', 'risks_notes', 'meeting_point')
+-- ORDER BY column_name;
+
+-- Verify volunteer_registrations table columns
+-- SELECT column_name, data_type, udt_name
+-- FROM information_schema.columns
+-- WHERE table_name = 'volunteer_registrations'
+-- AND column_name IN ('volunteer_name', 'volunteer_phone', 'available_time', 'skills', 'equipment', 'notes')
+-- ORDER BY column_name;
+
+-- ============================================================================
+-- SAMPLE DATA (for testing purposes)
+-- ============================================================================
+
+-- Update sample grids with contact info and risks
+UPDATE grids
+SET
+  contact_info = '聯絡人：陳組長 0912-345-678',
+  risks_notes = '注意：路面濕滑，請穿防滑鞋。有倒塌風險建築物，請勿靠近。'
+WHERE code = 'A1' AND contact_info IS NULL;
+
+UPDATE grids
+SET
+  contact_info = '聯絡人：林主任 0923-456-789',
+  risks_notes = '注意：部分區域水深及膝，請穿雨鞋。電線可能裸露，注意安全。'
+WHERE code = 'A2' AND contact_info IS NULL;
+
+UPDATE grids
+SET
+  contact_info = '聯絡人：王隊長 0934-567-890',
+  risks_notes = '注意：河岸泥濘，有滑倒風險。請攜帶口罩防止粉塵。'
+WHERE code = 'A3' AND contact_info IS NULL;
+
+-- Note: Sample volunteer_registrations data will be added in test files
+-- Example structure:
+-- INSERT INTO volunteer_registrations (
+--   grid_id, user_id, volunteer_name, volunteer_phone,
+--   status, available_time, skills, equipment, notes
+-- ) VALUES (
+--   (SELECT id FROM grids WHERE code = 'A1'),
+--   (SELECT id FROM users WHERE phone = '0912000001'),
+--   '張小明',
+--   '0912-111-222',
+--   'confirmed',
+--   '週末全天',
+--   ARRAY['重機械操作', '急救'],
+--   ARRAY['鏟子', '手套', '水桶'],
+--   '有清淤經驗'
+-- );
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696276800000_add_missing_columns', NOW());
+
+
+### MIGRATION 1696280400000_modular_rls (UP) ###
+-- ============================================
+-- Migration: Modular RLS Policies
+-- Timestamp: 1696280400000
+-- Created: 2025-10-03
+-- Description: Apply modular RLS policies (inlined from sql/rls/ directory)
+-- Supersedes: 0012_complete_rls_policies.sql
+-- ============================================
+--
+-- This migration reorganizes RLS policies into modular sections for better
+-- maintainability. All policies from migration 0012 are preserved but
+-- now organized into logical, maintainable modules.
+--
+-- Original modular structure (for reference):
+--   sql/rls/_helpers.sql          - Helper functions
+--   sql/rls/users.sql             - Users table policies
+--   sql/rls/grids.sql             - Grids table policies
+--   sql/rls/disaster_areas.sql    - Disaster areas policies
+--   sql/rls/announcements.sql     - Announcements policies
+--   sql/rls/volunteers.sql        - Volunteers policies
+--   sql/rls/volunteer_registrations.sql - Registration policies
+--   sql/rls/supply_donations.sql  - Donations policies
+--   sql/rls/grid_discussions.sql  - Discussions policies
+--   sql/rls/auth_tables.sql       - OTP codes, login history
+--   sql/rls/permissions.sql       - Permissions tables
+-- ============================================
+
+-- ============================================
+-- Step 1: Drop all existing policies from 0012
+-- ============================================
+
+-- Helper functions (will be recreated)
+DROP FUNCTION IF EXISTS user_has_role(TEXT[]) CASCADE;
+DROP FUNCTION IF EXISTS get_current_user_id() CASCADE;
+DROP FUNCTION IF EXISTS is_admin() CASCADE;
+DROP FUNCTION IF EXISTS is_grid_manager(UUID) CASCADE;
+
+-- Grids policies
+DROP POLICY IF EXISTS grids_select_all ON grids;
+DROP POLICY IF EXISTS grids_select_public ON grids;
+DROP POLICY IF EXISTS grids_insert_admin ON grids;
+DROP POLICY IF EXISTS grids_update_admin ON grids;
+DROP POLICY IF EXISTS grids_delete_super_admin ON grids;
+
+-- Announcements policies
+DROP POLICY IF EXISTS announcements_select_published ON announcements;
+DROP POLICY IF EXISTS announcements_select_public ON announcements;
+DROP POLICY IF EXISTS announcements_insert_admin ON announcements;
+DROP POLICY IF EXISTS announcements_update_author_or_admin ON announcements;
+DROP POLICY IF EXISTS announcements_delete_author_or_super_admin ON announcements;
+
+-- Volunteers policies
+DROP POLICY IF EXISTS volunteers_select_all ON volunteers;
+DROP POLICY IF EXISTS volunteers_select_self_or_admin ON volunteers;
+DROP POLICY IF EXISTS volunteers_insert_self ON volunteers;
+DROP POLICY IF EXISTS volunteers_update_self ON volunteers;
+DROP POLICY IF EXISTS volunteers_delete_self_or_super_admin ON volunteers;
+
+-- Volunteer registrations policies
+DROP POLICY IF EXISTS volunteer_registrations_select_own ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_select_own_or_admin ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_insert_own ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_update_own_or_admin ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_delete_own_or_super_admin ON volunteer_registrations;
+
+-- Disaster areas policies
+DROP POLICY IF EXISTS disaster_areas_select_all ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_select_public ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_insert_admin ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_update_admin ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_delete_super_admin ON disaster_areas;
+
+-- Supply donations policies
+DROP POLICY IF EXISTS supply_donations_select_all ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_select_public ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_insert_authenticated ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_update_admin ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_delete_super_admin ON supply_donations;
+
+-- Grid discussions policies
+DROP POLICY IF EXISTS grid_discussions_select_all ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_select_public ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_insert_authenticated ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_update_author ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_delete_author_or_super_admin ON grid_discussions;
+
+-- OTP codes policies
+DROP POLICY IF EXISTS otp_codes_no_select ON otp_codes;
+DROP POLICY IF EXISTS otp_codes_no_direct_insert ON otp_codes;
+DROP POLICY IF EXISTS otp_codes_no_update ON otp_codes;
+DROP POLICY IF EXISTS otp_codes_delete_super_admin ON otp_codes;
+
+-- Login history policies
+DROP POLICY IF EXISTS login_history_select_self_or_admin ON login_history;
+DROP POLICY IF EXISTS login_history_no_direct_insert ON login_history;
+DROP POLICY IF EXISTS login_history_no_update ON login_history;
+DROP POLICY IF EXISTS login_history_delete_super_admin ON login_history;
+
+-- Permissions policies
+DROP POLICY IF EXISTS permissions_select_all ON permissions;
+DROP POLICY IF EXISTS permissions_modify_super_admin ON permissions;
+
+-- Role permissions policies
+DROP POLICY IF EXISTS role_permissions_select_all ON role_permissions;
+DROP POLICY IF EXISTS role_permissions_modify_super_admin ON role_permissions;
+
+-- User permissions policies
+DROP POLICY IF EXISTS user_permissions_select_self_or_admin ON user_permissions;
+DROP POLICY IF EXISTS user_permissions_modify_super_admin ON user_permissions;
+
+-- Users policies
+DROP POLICY IF EXISTS users_select_self_or_admin ON users;
+DROP POLICY IF EXISTS users_insert_system ON users;
+DROP POLICY IF EXISTS users_update_self ON users;
+DROP POLICY IF EXISTS users_delete_super_admin ON users;
+
+-- ============================================
+-- Step 2: Apply modular RLS policies (inlined)
+-- ============================================
+
+-- ============================================
+-- MODULE: RLS Helper Functions
+-- Must be applied before any table policies
+-- ============================================
+
+-- Function to check if user has one of the required roles
+CREATE OR REPLACE FUNCTION user_has_role(required_roles TEXT[])
+RETURNS BOOLEAN AS $$
+DECLARE
+  current_user_id UUID;
+  current_user_role TEXT;
+BEGIN
+  -- Get current user ID from session context
+  BEGIN
+    current_user_id := current_setting('app.user_id', true)::UUID;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN FALSE;
+  END;
+
+  -- Return false if no user context
+  IF current_user_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  -- Get user role
+  SELECT role INTO current_user_role
+  FROM users
+  WHERE id = current_user_id;
+
+  -- Check if user role is in required roles
+  RETURN current_user_role = ANY(required_roles);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Function to get current user ID safely
+CREATE OR REPLACE FUNCTION get_current_user_id()
+RETURNS UUID AS $$
+BEGIN
+  RETURN current_setting('app.user_id', true)::UUID;
+EXCEPTION WHEN OTHERS THEN
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Function to check if user is admin (coordinator or above)
+CREATE OR REPLACE FUNCTION is_admin()
+RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin']);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Function to check if user is grid manager for a specific grid
+CREATE OR REPLACE FUNCTION is_grid_manager(grid_id_param UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+  current_user_id UUID;
+  manager_id UUID;
+BEGIN
+  current_user_id := get_current_user_id();
+
+  IF current_user_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  SELECT grid_manager_id INTO manager_id
+  FROM grids
+  WHERE id = grid_id_param;
+
+  RETURN manager_id = current_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+-- Grant execute permissions to public
+GRANT EXECUTE ON FUNCTION user_has_role(TEXT[]) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION get_current_user_id() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION is_admin() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION is_grid_manager(UUID) TO PUBLIC;
+
+-- Create indexes for faster role checks
+CREATE INDEX IF NOT EXISTS idx_users_role_lookup ON users(role) WHERE role IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_grids_manager_lookup ON grids(grid_manager_id) WHERE grid_manager_id IS NOT NULL;
+
+-- Comments
+COMMENT ON FUNCTION user_has_role IS 'Check if current user has one of the specified roles. Used in RLS policies.';
+COMMENT ON FUNCTION get_current_user_id IS 'Safely get current user ID from app.user_id session variable.';
+COMMENT ON FUNCTION is_admin IS 'Check if current user is an admin (coordinator or above).';
+COMMENT ON FUNCTION is_grid_manager IS 'Check if current user is the manager of a specific grid.';
+
+-- ============================================
+-- MODULE: RLS Policies for users table
+-- Self-access and admin management
+-- ============================================
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS users_select_self_or_admin ON users;
+DROP POLICY IF EXISTS users_insert_system ON users;
+DROP POLICY IF EXISTS users_update_self ON users;
+DROP POLICY IF EXISTS users_delete_super_admin ON users;
+
+-- SELECT: Users can view own profile, admins can view all
+CREATE POLICY users_select_self_or_admin ON users
+  FOR SELECT
+  USING (
+    id = get_current_user_id() OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin', 'data_analyst'])
+  );
+
+-- INSERT: Only through authentication system
+CREATE POLICY users_insert_system ON users
+  FOR INSERT
+  WITH CHECK (false);
+
+-- UPDATE: Users can update own profile, admins can update any user
+CREATE POLICY users_update_self ON users
+  FOR UPDATE
+  USING (
+    id = get_current_user_id() OR
+    user_has_role(ARRAY['regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY users_delete_super_admin ON users
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for grids table
+-- Public map data with admin-only modifications
+-- ============================================
+
+ALTER TABLE grids ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS grids_select_all ON grids;
+DROP POLICY IF EXISTS grids_select_public ON grids;
+DROP POLICY IF EXISTS grids_insert_admin ON grids;
+DROP POLICY IF EXISTS grids_update_admin ON grids;
+DROP POLICY IF EXISTS grids_delete_super_admin ON grids;
+
+-- SELECT: Everyone can view grids
+CREATE POLICY grids_select_public ON grids
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Only coordinators and admins
+CREATE POLICY grids_insert_admin ON grids
+  FOR INSERT
+  WITH CHECK (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- UPDATE: Only coordinators and admins
+CREATE POLICY grids_update_admin ON grids
+  FOR UPDATE
+  USING (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY grids_delete_super_admin ON grids
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for disaster_areas table
+-- Public safety information with admin control
+-- ============================================
+
+ALTER TABLE disaster_areas ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS disaster_areas_select_all ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_select_public ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_insert_admin ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_update_admin ON disaster_areas;
+DROP POLICY IF EXISTS disaster_areas_delete_super_admin ON disaster_areas;
+
+-- SELECT: Everyone can view disaster areas
+CREATE POLICY disaster_areas_select_public ON disaster_areas
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Only coordinators and admins
+CREATE POLICY disaster_areas_insert_admin ON disaster_areas
+  FOR INSERT
+  WITH CHECK (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- UPDATE: Only coordinators and admins
+CREATE POLICY disaster_areas_update_admin ON disaster_areas
+  FOR UPDATE
+  USING (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY disaster_areas_delete_super_admin ON disaster_areas
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for announcements table
+-- Public announcements with author/admin control
+-- ============================================
+
+ALTER TABLE announcements ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS announcements_select_published ON announcements;
+DROP POLICY IF EXISTS announcements_select_public ON announcements;
+DROP POLICY IF EXISTS announcements_insert_admin ON announcements;
+DROP POLICY IF EXISTS announcements_update_author_or_admin ON announcements;
+DROP POLICY IF EXISTS announcements_delete_author_or_super_admin ON announcements;
+
+-- SELECT: Published announcements visible to all, unpublished only to admins
+CREATE POLICY announcements_select_public ON announcements
+  FOR SELECT
+  USING (published = true OR is_admin());
+
+-- INSERT: Only coordinators and admins
+CREATE POLICY announcements_insert_admin ON announcements
+  FOR INSERT
+  WITH CHECK (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- UPDATE: Author or admins
+CREATE POLICY announcements_update_author_or_admin ON announcements
+  FOR UPDATE
+  USING (
+    author_id = get_current_user_id() OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Author or super admin
+CREATE POLICY announcements_delete_author_or_super_admin ON announcements
+  FOR DELETE
+  USING (
+    author_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for volunteers table
+-- Self-access and admin oversight
+-- ============================================
+
+ALTER TABLE volunteers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS volunteers_select_all ON volunteers;
+DROP POLICY IF EXISTS volunteers_select_self_or_admin ON volunteers;
+DROP POLICY IF EXISTS volunteers_insert_self ON volunteers;
+DROP POLICY IF EXISTS volunteers_update_self ON volunteers;
+DROP POLICY IF EXISTS volunteers_delete_self_or_super_admin ON volunteers;
+
+-- SELECT: Self or admins
+CREATE POLICY volunteers_select_self_or_admin ON volunteers
+  FOR SELECT
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin', 'data_analyst'])
+  );
+
+-- INSERT: Only self
+CREATE POLICY volunteers_insert_self ON volunteers
+  FOR INSERT
+  WITH CHECK (
+    user_id = get_current_user_id()
+  );
+
+-- UPDATE: Only self
+CREATE POLICY volunteers_update_self ON volunteers
+  FOR UPDATE
+  USING (
+    user_id = get_current_user_id()
+  );
+
+-- DELETE: Self or super admin
+CREATE POLICY volunteers_delete_self_or_super_admin ON volunteers
+  FOR DELETE
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for volunteer_registrations table
+-- Volunteers manage own registrations, admins approve
+-- ============================================
+
+ALTER TABLE volunteer_registrations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS volunteer_registrations_select_own ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_select_own_or_admin ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_insert_own ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_update_own_or_admin ON volunteer_registrations;
+DROP POLICY IF EXISTS volunteer_registrations_delete_own_or_super_admin ON volunteer_registrations;
+
+-- SELECT: Own registrations or admins
+CREATE POLICY volunteer_registrations_select_own_or_admin ON volunteer_registrations
+  FOR SELECT
+  USING (
+    volunteer_id IN (
+      SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+    ) OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin', 'data_analyst'])
+  );
+
+-- INSERT: Own registrations only
+CREATE POLICY volunteer_registrations_insert_own ON volunteer_registrations
+  FOR INSERT
+  WITH CHECK (
+    volunteer_id IN (
+      SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+    )
+  );
+
+-- UPDATE: Own pending registrations or admins
+CREATE POLICY volunteer_registrations_update_own_or_admin ON volunteer_registrations
+  FOR UPDATE
+  USING (
+    (
+      volunteer_id IN (
+        SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+      ) AND status = 'pending'
+    ) OR
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Own pending registrations or super admin
+CREATE POLICY volunteer_registrations_delete_own_or_super_admin ON volunteer_registrations
+  FOR DELETE
+  USING (
+    (
+      volunteer_id IN (
+        SELECT id FROM volunteers WHERE user_id = get_current_user_id()
+      ) AND status = 'pending'
+    ) OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for supply_donations table
+-- Public transparency with authenticated donations
+-- ============================================
+
+ALTER TABLE supply_donations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS supply_donations_select_all ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_select_public ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_insert_authenticated ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_update_admin ON supply_donations;
+DROP POLICY IF EXISTS supply_donations_delete_super_admin ON supply_donations;
+
+-- SELECT: Everyone can view donations
+CREATE POLICY supply_donations_select_public ON supply_donations
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Anyone authenticated
+CREATE POLICY supply_donations_insert_authenticated ON supply_donations
+  FOR INSERT
+  WITH CHECK (
+    get_current_user_id() IS NOT NULL
+  );
+
+-- UPDATE: Only coordinators
+CREATE POLICY supply_donations_update_admin ON supply_donations
+  FOR UPDATE
+  USING (
+    user_has_role(ARRAY['ngo_coordinator', 'regional_admin', 'super_admin'])
+  );
+
+-- DELETE: Only super admins
+CREATE POLICY supply_donations_delete_super_admin ON supply_donations
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for grid_discussions table
+-- Public forum with author control
+-- ============================================
+
+ALTER TABLE grid_discussions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS grid_discussions_select_all ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_select_public ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_insert_authenticated ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_update_author ON grid_discussions;
+DROP POLICY IF EXISTS grid_discussions_delete_author_or_super_admin ON grid_discussions;
+
+-- SELECT: Everyone can view discussions
+CREATE POLICY grid_discussions_select_public ON grid_discussions
+  FOR SELECT
+  USING (true);
+
+-- INSERT: Authenticated users
+CREATE POLICY grid_discussions_insert_authenticated ON grid_discussions
+  FOR INSERT
+  WITH CHECK (
+    get_current_user_id() IS NOT NULL AND
+    user_id = get_current_user_id()
+  );
+
+-- UPDATE: Only author
+CREATE POLICY grid_discussions_update_author ON grid_discussions
+  FOR UPDATE
+  USING (
+    user_id = get_current_user_id()
+  );
+
+-- DELETE: Author or super admin
+CREATE POLICY grid_discussions_delete_author_or_super_admin ON grid_discussions
+  FOR DELETE
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for Authentication Tables
+-- otp_codes and login_history
+-- ============================================
+
+-- OTP_CODES Table
+ALTER TABLE otp_codes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS otp_codes_no_select ON otp_codes;
+DROP POLICY IF EXISTS otp_codes_no_direct_insert ON otp_codes;
+DROP POLICY IF EXISTS otp_codes_no_update ON otp_codes;
+DROP POLICY IF EXISTS otp_codes_delete_super_admin ON otp_codes;
+
+-- SELECT: No direct access
+CREATE POLICY otp_codes_no_select ON otp_codes
+  FOR SELECT
+  USING (false);
+
+-- INSERT: Only through auth functions
+CREATE POLICY otp_codes_no_direct_insert ON otp_codes
+  FOR INSERT
+  WITH CHECK (false);
+
+-- UPDATE: Only through auth functions
+CREATE POLICY otp_codes_no_update ON otp_codes
+  FOR UPDATE
+  USING (false);
+
+-- DELETE: Only super admin
+CREATE POLICY otp_codes_delete_super_admin ON otp_codes
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- LOGIN_HISTORY Table
+ALTER TABLE login_history ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS login_history_select_self_or_admin ON login_history;
+DROP POLICY IF EXISTS login_history_no_direct_insert ON login_history;
+DROP POLICY IF EXISTS login_history_no_update ON login_history;
+DROP POLICY IF EXISTS login_history_delete_super_admin ON login_history;
+
+-- SELECT: Self or admins
+CREATE POLICY login_history_select_self_or_admin ON login_history
+  FOR SELECT
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin', 'regional_admin'])
+  );
+
+-- INSERT: Only through auth functions
+CREATE POLICY login_history_no_direct_insert ON login_history
+  FOR INSERT
+  WITH CHECK (false);
+
+-- UPDATE: No updates (audit trail)
+CREATE POLICY login_history_no_update ON login_history
+  FOR UPDATE
+  USING (false);
+
+-- DELETE: Only super admin
+CREATE POLICY login_history_delete_super_admin ON login_history
+  FOR DELETE
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- MODULE: RLS Policies for Permissions System
+-- permissions, role_permissions, user_permissions
+-- ============================================
+
+-- PERMISSIONS Table
+ALTER TABLE permissions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS permissions_select_all ON permissions;
+DROP POLICY IF EXISTS permissions_modify_super_admin ON permissions;
+
+-- SELECT: Everyone can view
+CREATE POLICY permissions_select_all ON permissions
+  FOR SELECT
+  USING (true);
+
+-- INSERT/UPDATE/DELETE: Only super admin
+CREATE POLICY permissions_modify_super_admin ON permissions
+  FOR ALL
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ROLE_PERMISSIONS Table
+ALTER TABLE role_permissions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS role_permissions_select_all ON role_permissions;
+DROP POLICY IF EXISTS role_permissions_modify_super_admin ON role_permissions;
+
+-- SELECT: Everyone can view
+CREATE POLICY role_permissions_select_all ON role_permissions
+  FOR SELECT
+  USING (true);
+
+-- INSERT/UPDATE/DELETE: Only super admin
+CREATE POLICY role_permissions_modify_super_admin ON role_permissions
+  FOR ALL
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- USER_PERMISSIONS Table
+ALTER TABLE user_permissions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS user_permissions_select_self_or_admin ON user_permissions;
+DROP POLICY IF EXISTS user_permissions_modify_super_admin ON user_permissions;
+
+-- SELECT: Self or admins
+CREATE POLICY user_permissions_select_self_or_admin ON user_permissions
+  FOR SELECT
+  USING (
+    user_id = get_current_user_id() OR
+    user_has_role(ARRAY['super_admin', 'regional_admin'])
+  );
+
+-- INSERT/UPDATE/DELETE: Only super admin
+CREATE POLICY user_permissions_modify_super_admin ON user_permissions
+  FOR ALL
+  USING (
+    user_has_role(ARRAY['super_admin'])
+  );
+
+-- ============================================
+-- Step 3: Verify all tables have RLS enabled
+-- ============================================
+
+DO $$
+DECLARE
+  tbl TEXT;
+  tables TEXT[] := ARRAY[
+    'users',
+    'grids',
+    'disaster_areas',
+    'announcements',
+    'volunteers',
+    'volunteer_registrations',
+    'supply_donations',
+    'grid_discussions',
+    'otp_codes',
+    'login_history',
+    'permissions',
+    'role_permissions',
+    'user_permissions'
+  ];
+BEGIN
+  FOREACH tbl IN ARRAY tables
+  LOOP
+    -- Enable RLS (idempotent)
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
+    RAISE NOTICE 'RLS enabled for table: %', tbl;
+  END LOOP;
+
+  RAISE NOTICE 'Modular RLS policies applied successfully';
+END $$;
+
+-- ============================================
+-- Step 4: Add table comments
+-- ============================================
+
+COMMENT ON TABLE users IS 'User accounts. Self-access for own data, admin access for management. RLS: modular_rls.sql';
+COMMENT ON TABLE grids IS 'Grid system for disaster area management. Public read, admin write. RLS: modular_rls.sql';
+COMMENT ON TABLE disaster_areas IS 'Disaster area definitions. Public read for safety, admin-only write. RLS: modular_rls.sql';
+COMMENT ON TABLE announcements IS 'Public announcements. Published items visible to all, author + admin control. RLS: modular_rls.sql';
+COMMENT ON TABLE volunteers IS 'Volunteer profiles. Users can manage own profile, admins can view all. RLS: modular_rls.sql';
+COMMENT ON TABLE volunteer_registrations IS 'Volunteer grid registrations. Self-service with admin approval workflow. RLS: modular_rls.sql';
+COMMENT ON TABLE supply_donations IS 'Supply donation tracking. Public transparency, authenticated donations. RLS: modular_rls.sql';
+COMMENT ON TABLE grid_discussions IS 'Grid discussion forum. Public read, authenticated post, author edit/delete. RLS: modular_rls.sql';
+COMMENT ON TABLE otp_codes IS 'One-time passwords. No direct access, managed through auth functions. RLS: modular_rls.sql';
+COMMENT ON TABLE login_history IS 'Login audit trail. Immutable record, self-view + admin access. RLS: modular_rls.sql';
+COMMENT ON TABLE permissions IS 'System permissions. Public read, super admin write. RLS: modular_rls.sql';
+COMMENT ON TABLE role_permissions IS 'Role-permission mappings. Public read, super admin write. RLS: modular_rls.sql';
+COMMENT ON TABLE user_permissions IS 'User-specific permissions. Self-view, super admin management. RLS: modular_rls.sql';
+
+-- ============================================
+-- End of Migration: Modular RLS
+-- ============================================
+;
+INSERT INTO "public"."pgmigrations" (name, run_on) VALUES ('1696280400000_modular_rls', NOW());
+
+
+Migrations complete![0m
+[32m✓ Migrations applied successfully[0m
+[34m[5/5] Verifying database setup...[0m
+[32m✓ Table exists: users[0m
+[32m✓ Table exists: disaster_areas[0m
+[32m✓ Table exists: grids[0m
+[32m✓ Table exists: volunteers[0m
+[32m✓ Table exists: volunteer_registrations[0m
+[32m✓ Table exists: announcements[0m
+[32m✓ Table exists: supply_donations[0m
+[32m✓ Table exists: grid_discussions[0m
+[32m✓ Table exists: pgmigrations[0m
+[32m✓ Function exists: user_has_role()[0m
+[32m✓ Function exists: get_current_user_id()[0m
+[32m✓ Function exists: is_admin()[0m
+[32m✓ Applied 14 migrations[0m
+[32m✓ Database verification completed successfully[0m
+[1m
+============================================================[0m
+[32m[1m  ✓ Test Database Setup Complete![0m
+[1m============================================================
+[0m
+[34mYou can now run tests with:[0m
+[0m  npm test
+[0m
+[34mConnection string:[0m
+[0m  postgres://postgres:postgres@localhost:5432/shovelheroes_test
+[0m
+
+> shovel-backend@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.4 /home/thc1006/dev/shovel-heroes/packages/backend
+
+ ❯ tests/rls/grids.rls.test.ts (16 tests | 16 failed) 961ms
+   × RLS Policies: grids table > RLS Configuration > should have RLS enabled on grids table 120ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > RLS Configuration > should have 4 policies on grids table 59ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > SELECT policies > should allow unauthenticated users to view grids 42ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > SELECT policies > should allow all authenticated users to view grids 31ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > INSERT policies > should allow ngo_coordinator to insert grids 41ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > INSERT policies > should allow regional_admin to insert grids 46ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > INSERT policies > should prevent volunteer from inserting grids 56ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > INSERT policies > should prevent data_analyst from inserting grids 64ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > UPDATE policies > should allow super_admin to update grids 58ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > UPDATE policies > should allow ngo_coordinator to update grids 43ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > UPDATE policies > should prevent volunteer from updating grids 65ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > DELETE policies > should allow only super_admin to delete grids 39ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > DELETE policies > should prevent ngo_coordinator from deleting grids 45ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > DELETE policies > should prevent regional_admin from deleting grids 53ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > Grid Manager scenarios > should allow grid manager to be assigned 46ms
+     → relation "volunteer_registrations" does not exist
+   × RLS Policies: grids table > Grid Manager scenarios > should verify is_grid_manager helper function works 71ms
+     → relation "volunteer_registrations" does not exist
+ ❯ tests/routes/users.test.ts (18 tests | 18 failed) 1194ms
+   × Users Routes - TDD > GET /users > Success Cases > should return empty array when no users exist 182ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /users > Success Cases > should return all users without authentication (public endpoint) 54ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /users > Success Cases > should limit results to 100 users 33ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /users > Success Cases > should not expose sensitive information 47ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /users > Edge Cases > should handle Unicode characters in names 119ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /users > Edge Cases > should handle null phone numbers 62ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Success Cases > should return current user info when authenticated 67ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Success Cases > should upsert user if not exists in database (JWT-based auth) 50ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Success Cases > should return user with all expected fields 46ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Authentication Failures > should return 401 when no auth token is provided 49ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Authentication Failures > should return 401 when auth token is invalid 36ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Authentication Failures > should return 401 when auth token is expired 48ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Authentication Failures > should return 401 when auth token is malformed 59ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Authentication Failures > should return 401 when authorization header is missing Bearer prefix 37ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Edge Cases > should handle concurrent requests from same user 26ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > GET /me > Edge Cases > should handle very long email addresses 45ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > Security > should not expose other users data via /me endpoint 87ms
+     → relation "volunteer_registrations" does not exist
+   × Users Routes - TDD > Security > should sanitize SQL injection attempts in JWT sub claim 49ms
+     → relation "volunteer_registrations" does not exist
+ ❯ tests/routes/volunteers.test.ts (26 tests | 26 failed) 1569ms
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should return empty array when no volunteers exist 114ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should return volunteers with basic information 53ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should mask phone numbers when can_view_phone is false (no auth) 34ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should show masked phone numbers when authenticated (can_view_phone is true) 43ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should filter volunteers by grid_id 28ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should support pagination with limit and offset 34ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should include status_counts when include_counts=true 63ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should not include status_counts when include_counts=false 39ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Success Cases > should order volunteers by created_at DESC 79ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Query Parameter Validation > should return 400 when grid_id is not a valid UUID 68ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Query Parameter Validation > should handle negative limit gracefully 71ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Query Parameter Validation > should handle negative offset gracefully 39ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Phone Masking Logic > should mask phone number correctly for standard format 94ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Phone Masking Logic > should handle short phone numbers 53ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Phone Masking Logic > should handle null phone numbers 76ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Edge Cases > should handle volunteers with null names 72ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Edge Cases > should handle very large result sets with pagination 38ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Edge Cases > should handle concurrent requests efficiently 71ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > Security > should not leak sensitive information in error messages 57ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Unauthenticated Users > should NOT see phone numbers for unauthenticated requests 36ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Admin Users > should see full phone numbers for super_admin 49ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Admin Users > should see full phone numbers for regional_admin 49ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Grid Manager Users > should see phone numbers for volunteers in THEIR grids 38ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Grid Manager Users > should NOT see phone numbers for volunteers in OTHER grids 46ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Grid Manager Users > should handle grid with no manager (no permission) 28ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Regular Volunteer Users > should NOT see phone numbers for regular volunteer users 60ms
+     → relation "volunteer_registrations" does not exist
+ ❯ tests/routes/volunteer-registrations.test.ts (30 tests | 30 failed) 1689ms
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Success Cases > should create volunteer registration with valid data and return 201 165ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Success Cases > should allow user to register themselves as volunteer 43ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Success Cases > should allow multiple volunteers to register for same grid 32ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when grid_id is missing 39ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when volunteer_id is missing 25ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when grid_id is not a valid UUID 43ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when volunteer_id is not a valid UUID 37ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should handle non-existent grid_id 71ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Authentication & Authorization > should return 401 when no auth token is provided 52ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Authentication & Authorization > should return 401 when auth token is invalid 58ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should return empty array when no registrations exist 52ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should return all registrations without authentication (public endpoint) 44ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should order registrations by created_at DESC 63ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should limit results to 200 registrations 55ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Success Cases > should update registration status and return 200 46ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Success Cases > should allow volunteer to update their own registration 27ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Success Cases > should support all valid status transitions 44ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Validation Failures > should return 400 when status has invalid value 28ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Not Found Cases > should return 404 when registration does not exist 61ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Authentication & Authorization > should return 401 when no auth token is provided 69ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Authentication & Authorization > should prevent user from updating other volunteers registrations 46ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Success Cases > should delete registration successfully and return 204 90ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Success Cases > should allow volunteer to cancel their own registration 42ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Not Found Cases > should return 404 when registration does not exist 34ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Authentication & Authorization > should return 401 when no auth token is provided 28ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Authentication & Authorization > should prevent user from deleting other volunteers registrations 45ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > Edge Cases & Security > should handle concurrent registrations for same volunteer 58ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > Edge Cases & Security > should handle duplicate registration attempts 40ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > Edge Cases & Security > should handle rapid status updates 44ms
+     → relation "volunteer_registrations" does not exist
+   × Volunteer Registrations CRUD - TDD > Edge Cases & Security > should validate UUID format in URL parameters 56ms
+     → relation "volunteer_registrations" does not exist
+ ❯ tests/routes/supply-donations.test.ts (27 tests | 27 failed) 1686ms
+   × Supply Donations CRUD - TDD > POST /supply-donations > Success Cases > should create supply donation with valid data and return 201 185ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Success Cases > should create supply donation without optional donor_contact 51ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when grid_id is missing 36ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when grid_id is not a valid UUID 63ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when donor_name is empty 35ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when quantity is negative 69ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when quantity is zero 54ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when quantity is not an integer 84ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Authentication & Authorization > should return 401 when no auth token is provided 41ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > POST /supply-donations > Authentication & Authorization > should return 401 when auth token is invalid 50ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should return empty array when no supply donations exist 48ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should return all supply donations without authentication (public endpoint) 75ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should order donations by created_at DESC 31ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should limit results to 200 donations 47ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Success Cases > should update supply donation status and return 200 34ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Success Cases > should update quantity and notes 50ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Success Cases > should support partial updates 68ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Validation Failures > should return 400 when status has invalid value 63ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Validation Failures > should return 400 when quantity is negative 94ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Not Found Cases > should return 404 when supply donation does not exist 47ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > PUT /supply-donations/:id > Authentication & Authorization > should return 401 when no auth token is provided 36ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > DELETE /supply-donations/:id > Success Cases > should delete supply donation successfully and return 204 46ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > DELETE /supply-donations/:id > Not Found Cases > should return 404 when supply donation does not exist 48ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > DELETE /supply-donations/:id > Authentication & Authorization > should return 401 when no auth token is provided 34ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > Edge Cases & Security > should handle concurrent updates correctly 49ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > Edge Cases & Security > should handle Unicode characters in text fields 53ms
+     → relation "volunteer_registrations" does not exist
+   × Supply Donations CRUD - TDD > Edge Cases & Security > should sanitize SQL injection attempts 79ms
+     → relation "volunteer_registrations" does not exist
+ ❯ tests/integration.test.ts (29 tests | 28 failed) 2217ms
+   × Integration Tests - Full Workflow > Complete Disaster Response Workflow > should handle complete workflow: create disaster area → create grid → volunteer registration 192ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Row-Level Security (RLS) Tests > should enforce RLS policies across multiple users 46ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Row-Level Security (RLS) Tests > should apply RLS filtering when app.user_id is set 41ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Rate Limiting Tests > should allow requests within rate limit 30ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Rate Limiting Tests > should include rate limit headers 52ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > JWT Authentication Tests > should reject requests with invalid JWT 48ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > JWT Authentication Tests > should accept valid JWT tokens 64ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > JWT Authentication Tests > should handle JWT expiration 71ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Input Validation Tests > should validate disaster area creation payload 64ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Input Validation Tests > should validate volunteer registration payload 48ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Input Validation Tests > should validate announcement payload 36ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Error Handling Tests > should return 404 for non-existent disaster area 72ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Error Handling Tests > should return 404 when updating non-existent disaster area 69ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Error Handling Tests > should return 404 when deleting non-existent disaster area 66ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Error Handling Tests > should return proper JSON error format 89ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > CRUD Operations Tests > Announcements > should create and list announcements 62ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > CRUD Operations Tests > Supply Donations > should create and list supply donations 51ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > CRUD Operations Tests > Grid Discussions > should create and list grid discussions 57ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should update grid with partial fields 57ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should update grid JSONB fields (bounds and supplies_needed) 32ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should update volunteer counts 57ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should return 404 when updating non-existent grid 135ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should return current grid when no fields provided 32ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should validate invalid grid_type in update 64ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should require authentication for grid updates 50ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Grid Update Tests > should update updated_at timestamp 54ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Data Format Tests > should use ISO 8601 format for timestamps 69ms
+     → relation "volunteer_registrations" does not exist
+   × Integration Tests - Full Workflow > Data Format Tests > should use UUIDs for all IDs 33ms
+     → relation "volunteer_registrations" does not exist
+   ✓ Integration Tests - Full Workflow > Data Format Tests > should use parameterized queries (no SQL injection)  357ms
+ ❯ tests/routes/grids.test.ts (47 tests | 32 failed) 3632ms
+   × Grids CRUD - TDD London School > POST /grids > Success Cases > should create grid with valid minimal data and return 201 176ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Success Cases > should create grid with all optional fields 70ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Success Cases > should create grid with null area_id (not linked to disaster area) 51ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when code is missing 39ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when grid_type is invalid 48ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when center_lat is out of range 60ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when center_lng is out of range 81ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when bounds format is invalid 46ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when volunteer_needed is negative 74ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Authentication & Authorization > should return 401 when no auth token is provided 52ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Authentication & Authorization > should return 401 when auth token is invalid 41ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Authentication & Authorization > should return 401 when auth token is expired 35ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Duplicate Code Handling > should return 409 when grid code already exists 46ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > POST /grids > Foreign Key Constraints > should return 400 or 404 when area_id references non-existent disaster area 21ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Success Cases > should return empty array when no grids exist 24ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Success Cases > should return all grids without authentication (public endpoint) 54ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Success Cases > should filter grids by area_id query parameter 68ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Success Cases > should return grids ordered by code 54ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Success Cases > should limit results to 100 grids 56ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Success Cases > should include all grid fields in response 82ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Query Parameter Validation > should return 400 when area_id is not a valid UUID 70ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > GET /grids > Query Parameter Validation > should return empty array when filtering by non-existent area_id 52ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update grid with valid data and return 200 77ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should support partial updates (only update provided fields) 83ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update bounds field with valid GeoJSON-like structure 44ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update supplies_needed array 21ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update volunteer counts 39ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Validation Failures > should return 400 when status has invalid value 37ms
+     → relation "volunteer_registrations" does not exist
+   × Grids CRUD - TDD London School > PUT /grids/:id > Validation Failures > should return 400 when grid_type has invalid value 55ms
+     → relation "volunteer_registrations" does not exist
+   ✓ Grids CRUD - TDD London School > PUT /grids/:id > Validation Failures > should return 400 when bounds format is invalid 224ms
+   ✓ Grids CRUD - TDD London School > PUT /grids/:id > Validation Failures > should return 400 when volunteer numbers are negative 182ms
+   ✓ Grids CRUD - TDD London School > PUT /grids/:id > Not Found Cases > should return 404 when grid does not exist 84ms
+   ✓ Grids CRUD - TDD London School > PUT /grids/:id > Not Found Cases > should return 400 when grid ID is not a valid UUID 26ms
+   ✓ Grids CRUD - TDD London School > PUT /grids/:id > Authentication & Authorization > should return 401 when no auth token is provided 78ms
+   ✓ Grids CRUD - TDD London School > PUT /grids/:id > Authentication & Authorization > should return 401 when auth token is invalid 102ms
+   ✓ Grids CRUD - TDD London School > DELETE /grids/:id > Success Cases > should delete grid successfully and return 204 110ms
+   ✓ Grids CRUD - TDD London School > DELETE /grids/:id > Success Cases > should cascade delete volunteer_registrations when grid is deleted 227ms
+   × Grids CRUD - TDD London School > DELETE /grids/:id > Success Cases > should cascade delete supply_donations when grid is deleted 38ms
+     → column "name" of relation "supply_donations" does not exist
+   × Grids CRUD - TDD London School > DELETE /grids/:id > Success Cases > should cascade delete grid_discussions when grid is deleted 134ms
+     → column "content" of relation "grid_discussions" does not exist
+   ✓ Grids CRUD - TDD London School > DELETE /grids/:id > Not Found Cases > should return 404 when grid does not exist 235ms
+   ✓ Grids CRUD - TDD London School > DELETE /grids/:id > Not Found Cases > should return 400 when grid ID is not a valid UUID 92ms
+   ✓ Grids CRUD - TDD London School > DELETE /grids/:id > Authentication & Authorization > should return 401 when no auth token is provided 44ms
+   ✓ Grids CRUD - TDD London School > DELETE /grids/:id > Authentication & Authorization > should return 401 when auth token is invalid 130ms
+   × Grids CRUD - TDD London School > Edge Cases & Security > should handle concurrent updates correctly 35ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   ✓ Grids CRUD - TDD London School > Edge Cases & Security > should sanitize input to prevent SQL injection 116ms
+   ✓ Grids CRUD - TDD London School > Edge Cases & Security > should handle very long text fields 26ms
+   ✓ Grids CRUD - TDD London School > Edge Cases & Security > should handle Unicode characters in text fields 21ms
+stdout | tests/integration/api.test.ts > API Integration Tests
+✓ Environment variables validated successfully
+
+ ❯ tests/grids-post.test.ts (7 tests | 2 failed) 381ms
+   × POST /grids > should create a new grid with valid data 111ms
+     → expected '23.5000000' to be 23.5 // Object.is equality
+   ✓ POST /grids > should return 400 for missing required fields 6ms
+   ✓ POST /grids > should return 400 for invalid grid_type 2ms
+   ✓ POST /grids > should return 400 for invalid coordinates 4ms
+   ✓ POST /grids > should return 401 without authentication 1ms
+   × POST /grids > should return 409 for duplicate code 38ms
+     → expected 201 to be 409 // Object.is equality
+   ✓ POST /grids > should use default values correctly 33ms
+ ❯ tests/integration/api.test.ts (16 tests | 16 skipped) 245ms
+   ↓ API Integration Tests > 1. Grids CRUD > POST /grids - should create a new grid
+   ↓ API Integration Tests > 1. Grids CRUD > GET /grids - should list all grids
+   ↓ API Integration Tests > 1. Grids CRUD > GET /grids?area_id - should filter grids by area
+   ↓ API Integration Tests > 1. Grids CRUD > PUT /grids/:id - should update grid status and volunteer_needed
+   ↓ API Integration Tests > 1. Grids CRUD > DELETE /grids/:id - should delete grid
+   ↓ API Integration Tests > 2. Volunteer Registrations > POST /volunteer-registrations - should create registration
+   ↓ API Integration Tests > 2. Volunteer Registrations > PUT /volunteer-registrations/:id - should update status
+   ↓ API Integration Tests > 2. Volunteer Registrations > GET /volunteer-registrations - should list registrations
+   ↓ API Integration Tests > 3. Supply Donations CRUD > POST /supply-donations - should create donation
+   ↓ API Integration Tests > 3. Supply Donations CRUD > PUT /supply-donations/:id - should update donation status
+   ↓ API Integration Tests > 3. Supply Donations CRUD > DELETE /supply-donations/:id - should delete donation
+   ↓ API Integration Tests > 4. Announcements CRUD > POST /announcements - should create announcement
+   ↓ API Integration Tests > 4. Announcements CRUD > PUT /announcements/:id - should update announcement
+   ↓ API Integration Tests > 4. Announcements CRUD > DELETE /announcements/:id - should delete announcement
+   ↓ API Integration Tests > 5. Trigger Validation - volunteer_registered counter > should auto-increment volunteer_registered on registration
+   ↓ API Integration Tests > 5. Trigger Validation - volunteer_registered counter > should auto-decrement volunteer_registered on deletion
+ ❯ tests/integration/volunteer-registrations.test.ts (15 tests | 15 skipped) 447ms
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Authentication and Authorization > should return 401 when no auth token provided
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Authentication and Authorization > should return 404 when trying to update non-existent registration
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Authentication and Authorization > should return 404 when trying to update another user's registration
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Validation > should return 400 when status is missing
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Validation > should return 400 when status is invalid
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to update pending → confirmed
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to update confirmed → arrived
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to update arrived → completed
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to cancel from pending status
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to cancel from confirmed status
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to cancel from arrived status
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Status Transitions - User (Owner) > should allow user to cancel from completed status
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Complete Status Flow > should allow complete flow: pending → confirmed → arrived → completed
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Updated Timestamp > should update updated_at timestamp on status change
+   ↓ PUT /volunteer-registrations/:id - Status Updates > Response Format > should return complete registration object on success
+ ❯ tests/routes/admin.test.ts (17 tests | 17 skipped) 166ms
+   ↓ Admin Routes > GET /admin/users > should list users with pagination
+   ↓ Admin Routes > GET /admin/users > should filter users by role
+   ↓ Admin Routes > GET /admin/users > should filter users by status
+   ↓ Admin Routes > GET /admin/users > should search users by email or phone
+   ↓ Admin Routes > GET /admin/users > should require authentication
+   ↓ Admin Routes > POST /admin/verify-victim > should approve victim verification
+   ↓ Admin Routes > POST /admin/verify-victim > should reject victim verification
+   ↓ Admin Routes > POST /admin/verify-victim > should request more info
+   ↓ Admin Routes > POST /admin/verify-victim > should return 404 for non-existent victim
+   ↓ Admin Routes > GET /admin/audit-logs > should get audit logs with pagination
+   ↓ Admin Routes > GET /admin/audit-logs > should filter audit logs by user_id
+   ↓ Admin Routes > GET /admin/audit-logs > should filter audit logs by action
+   ↓ Admin Routes > PATCH /admin/users/:id/status > should update user status to suspended
+   ↓ Admin Routes > PATCH /admin/users/:id/status > should update user status to active
+   ↓ Admin Routes > PATCH /admin/users/:id/status > should prevent self-suspension
+   ↓ Admin Routes > PATCH /admin/users/:id/status > should require super_admin role
+   ↓ Admin Routes > GET /admin/stats > should return dashboard statistics
+stdout | tests/lib/test-db-setup.test.ts > Test Database Setup > Migration Status > should list all applied migrations
+
+Applied migrations:
+  - 1696233600000_init (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696237200000_rls (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696240800000_audit (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696244400000_create_all_tables (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696248000000_expand_grids_table (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696251600000_add_announcement_fields (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696255200000_add_volunteer_registration_statuses (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696258800000_add_grid_manager_column (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696262400000_create_auth_system (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696266000000_add_grid_code_unique_constraint (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696269600000_auto_update_volunteer_count (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696273200000_complete_rls_policies (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696276800000_add_missing_columns (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+  - 1696280400000_modular_rls (Fri Oct 03 2025 06:45:52 GMT+0800 (Taiwan Standard Time))
+
+stdout | tests/lib/test-db-setup.test.ts > Test Database Setup > Required Tables > should have all required tables
+
+All tables in test database:
+  - announcements
+  - audit_log
+  - audit_logs
+  - disaster_areas
+  - grid_discussions
+  - grids
+  - login_history
+  - otp_codes
+  - permissions
+  - pgmigrations
+  - role_permissions
+  - sessions
+  - supply_donations
+  - user_permissions
+  - users
+  - victim_profiles
+  - volunteer_profiles
+  - volunteer_registrations
+  - volunteers
+
+stdout | tests/lib/test-db-setup.test.ts > Test Database Setup > Row-Level Security (RLS) > should list all RLS policies
+
+RLS Policies:
+  - announcements.announcements_delete_author_or_super_admin (DELETE)
+  - announcements.announcements_insert_admin (INSERT)
+  - announcements.announcements_select_public (SELECT)
+  - announcements.announcements_update_author_or_admin (UPDATE)
+  - disaster_areas.disaster_areas_delete_super_admin (DELETE)
+  - disaster_areas.disaster_areas_insert_admin (INSERT)
+  - disaster_areas.disaster_areas_select_public (SELECT)
+  - disaster_areas.disaster_areas_update_admin (UPDATE)
+  - grid_discussions.grid_discussions_delete_author_or_super_admin (DELETE)
+  - grid_discussions.grid_discussions_insert_authenticated (INSERT)
+  - grid_discussions.grid_discussions_select_public (SELECT)
+  - grid_discussions.grid_discussions_update_author (UPDATE)
+  - grids.grids_delete_super_admin (DELETE)
+  - grids.grids_insert_admin (INSERT)
+  - grids.grids_select_public (SELECT)
+  - grids.grids_update_admin (UPDATE)
+  - login_history.login_history_delete_super_admin (DELETE)
+  - login_history.login_history_no_direct_insert (INSERT)
+  - login_history.login_history_no_update (UPDATE)
+  - login_history.login_history_select_self_or_admin (SELECT)
+  - otp_codes.otp_codes_delete_super_admin (DELETE)
+  - otp_codes.otp_codes_no_direct_insert (INSERT)
+  - otp_codes.otp_codes_no_select (SELECT)
+  - otp_codes.otp_codes_no_update (UPDATE)
+  - permissions.permissions_modify_super_admin (ALL)
+  - permissions.permissions_select_all (SELECT)
+  - role_permissions.role_permissions_modify_super_admin (ALL)
+  - role_permissions.role_permissions_select_all (SELECT)
+  - supply_donations.supply_donations_delete_super_admin (DELETE)
+  - supply_donations.supply_donations_insert_authenticated (INSERT)
+  - supply_donations.supply_donations_select_public (SELECT)
+  - supply_donations.supply_donations_update_admin (UPDATE)
+  - user_permissions.user_permissions_modify_super_admin (ALL)
+  - user_permissions.user_permissions_select_self_or_admin (SELECT)
+  - users.users_admin_access (ALL)
+  - users.users_delete_super_admin (DELETE)
+  - users.users_insert_system (INSERT)
+  - users.users_select_self_or_admin (SELECT)
+  - users.users_self_access (SELECT)
+  - users.users_update_self (UPDATE)
+  - volunteer_profiles.volunteer_ngo_access (SELECT)
+  - volunteer_profiles.volunteer_self_access (ALL)
+  - volunteer_registrations.volunteer_registrations_delete_own_or_super_admin (DELETE)
+  - volunteer_registrations.volunteer_registrations_insert_own (INSERT)
+  - volunteer_registrations.volunteer_registrations_select_own_or_admin (SELECT)
+  - volunteer_registrations.volunteer_registrations_update_own (UPDATE)
+  - volunteer_registrations.volunteer_registrations_update_own_or_admin (UPDATE)
+  - volunteers.volunteers_delete_self_or_super_admin (DELETE)
+  - volunteers.volunteers_insert_self (INSERT)
+  - volunteers.volunteers_select_self_or_admin (SELECT)
+  - volunteers.volunteers_update_self (UPDATE)
+
+ ❯ tests/routes/grid-discussions.test.ts (21 tests | 16 failed) 2221ms
+   × Grid Discussions Routes - TDD > POST /grid-discussions > Success Cases > should create grid discussion with valid data and return 201 315ms
+     → expected 500 to be 201 // Object.is equality
+   × Grid Discussions Routes - TDD > POST /grid-discussions > Success Cases > should associate discussion with authenticated user from JWT 46ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > POST /grid-discussions > Success Cases > should handle multiple discussions on same grid 137ms
+     → expected 500 to be 201 // Object.is equality
+   ✓ Grid Discussions Routes - TDD > POST /grid-discussions > Validation Failures > should return 400 when grid_id is missing 30ms
+   ✓ Grid Discussions Routes - TDD > POST /grid-discussions > Validation Failures > should return 400 when grid_id is not a valid UUID 19ms
+   ✓ Grid Discussions Routes - TDD > POST /grid-discussions > Validation Failures > should return 400 when content is missing 33ms
+   ✓ Grid Discussions Routes - TDD > POST /grid-discussions > Validation Failures > should return 400 when content is empty string 24ms
+   ✓ Grid Discussions Routes - TDD > POST /grid-discussions > Validation Failures > should handle non-existent grid_id 45ms
+   × Grid Discussions Routes - TDD > POST /grid-discussions > Authentication & Authorization > should return 401 when no auth token is provided 12ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > POST /grid-discussions > Authentication & Authorization > should return 401 when auth token is invalid 140ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > POST /grid-discussions > Authentication & Authorization > should return 401 when auth token is expired 84ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should return empty array when no discussions exist 110ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should return all grid discussions without authentication (public endpoint) 106ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should order discussions by created_at DESC 112ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should limit results to 200 discussions 111ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should include discussions from multiple grids 95ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > Edge Cases & Security > should handle Unicode characters in content 122ms
+     → expected 500 to be 201 // Object.is equality
+   × Grid Discussions Routes - TDD > Edge Cases & Security > should handle very long content 27ms
+     → update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+   × Grid Discussions Routes - TDD > Edge Cases & Security > should sanitize SQL injection attempts 183ms
+     → expected 500 to be 201 // Object.is equality
+   × Grid Discussions Routes - TDD > Edge Cases & Security > should handle concurrent posts efficiently 165ms
+     → expected 500 to be 201 // Object.is equality
+   × Grid Discussions Routes - TDD > Edge Cases & Security > should handle XSS attempts in content 53ms
+     → expected 500 to be 201 // Object.is equality
+ ✓ tests/lib/test-db-setup.test.ts (34 tests) 487ms
+ ✓ tests/schema/migration-0013.test.ts (15 tests) 426ms
+stdout | tests/routes/debug.test.ts > Debug Routes
+✓ Environment variables validated successfully
+
+ ❯ tests/routes/announcements.test.ts (29 tests | 3 failed) 3049ms
+   × Announcements CRUD - TDD > POST /announcements > Success Cases > should create announcement with valid data and return 201 467ms
+     → expected 500 to be 201 // Object.is equality
+   ✓ Announcements CRUD - TDD > POST /announcements > Success Cases > should create announcement with default values 119ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Success Cases > should create unpublished announcement 44ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Success Cases > should create announcement with all priority levels 130ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Validation Failures > should return 400 when title is missing 43ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Validation Failures > should return 400 when title is empty string 51ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Validation Failures > should return 400 when content is missing 40ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Validation Failures > should return 400 when priority has invalid value 26ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Authentication & Authorization > should return 401 when no auth token is provided 22ms
+   ✓ Announcements CRUD - TDD > POST /announcements > Authentication & Authorization > should return 401 when auth token is invalid 10ms
+   ✓ Announcements CRUD - TDD > GET /announcements > Success Cases > should return empty array when no announcements exist 26ms
+   ✓ Announcements CRUD - TDD > GET /announcements > Success Cases > should return only published announcements (public endpoint) 38ms
+   × Announcements CRUD - TDD > GET /announcements > Success Cases > should return announcements without authentication (public endpoint) 48ms
+     → expected [ { …(13) }, { …(13) } ] to have a length of 3 but got 2
+   ✓ Announcements CRUD - TDD > GET /announcements > Success Cases > should order announcements by is_pinned DESC, order ASC, created_at DESC 73ms
+   × Announcements CRUD - TDD > GET /announcements > Success Cases > should limit results to 100 announcements 700ms
+     → expected [ { …(13) }, { …(13) }, …(9) ] to have a length of 100 but got 11
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Success Cases > should update announcement and return 200 150ms
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Success Cases > should support partial updates 60ms
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Success Cases > should update published status 49ms
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Validation Failures > should return 400 when title is empty string 65ms
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Validation Failures > should return 400 when priority has invalid value 60ms
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Not Found Cases > should return 404 when announcement does not exist 63ms
+   ✓ Announcements CRUD - TDD > PUT /announcements/:id > Authentication & Authorization > should return 401 when no auth token is provided 56ms
+   ✓ Announcements CRUD - TDD > DELETE /announcements/:id > Success Cases > should delete announcement successfully and return 204 114ms
+   ✓ Announcements CRUD - TDD > DELETE /announcements/:id > Not Found Cases > should return 404 when announcement does not exist 161ms
+   ✓ Announcements CRUD - TDD > DELETE /announcements/:id > Authentication & Authorization > should return 401 when no auth token is provided 82ms
+   ✓ Announcements CRUD - TDD > Edge Cases & Security > should handle Unicode characters in text fields 30ms
+   ✓ Announcements CRUD - TDD > Edge Cases & Security > should handle very long content 34ms
+   ✓ Announcements CRUD - TDD > Edge Cases & Security > should sanitize SQL injection attempts 32ms
+   ✓ Announcements CRUD - TDD > Edge Cases & Security > should handle concurrent updates correctly 80ms
+ ✓ src/index.test.ts (1 test) 251ms
+ ✓ tests/lib/email.test.ts (13 tests) 23ms
+ ✓ tests/lib/openapi-types.test.ts (18 tests) 27ms
+ ✓ tests/routes/debug.test.ts (8 tests) 672ms
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should initialize OTel SDK when OTEL_ENABLED is true
+✓ OpenTelemetry: Using console exporter (no OTLP endpoint configured)
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should initialize OTel SDK when OTEL_ENABLED is true
+✓ OpenTelemetry: Initialized successfully
+  Service: test-service
+  Environment: development
+  Exporter: console
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should skip initialization when OTEL_ENABLED is false
+⊘ OpenTelemetry: Disabled via OTEL_ENABLED=false
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should handle initialization errors gracefully
+✓ OpenTelemetry: Using OTLP exporter (invalid://endpoint)
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should handle initialization errors gracefully
+✓ OpenTelemetry: Initialized successfully
+  Service: shovel-heroes-api
+  Environment: development
+  Exporter: otlp
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should shutdown gracefully
+✓ OpenTelemetry: Using console exporter (no OTLP endpoint configured)
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should shutdown gracefully
+✓ OpenTelemetry: Initialized successfully
+  Service: shovel-heroes-api
+  Environment: development
+  Exporter: console
+
+stdout | tests/otel/init.test.ts > OpenTelemetry Initialization > should shutdown gracefully
+✓ OpenTelemetry: Shutdown complete
+
+ ✓ tests/otel/init.test.ts (11 tests) 3823ms
+   ✓ OpenTelemetry Initialization > should initialize OTel SDK when OTEL_ENABLED is true  3642ms
+stdout | process.<anonymous> (/home/thc1006/dev/shovel-heroes/packages/backend/src/otel/init.ts:148:15)
+OpenTelemetry: Shutting down...
+OpenTelemetry: Shutting down...
+OpenTelemetry: Shutting down...
+
+stdout | shutdownOTel (/home/thc1006/dev/shovel-heroes/packages/backend/src/otel/init.ts:180:13)
+✓ OpenTelemetry: Shutdown complete
+
+stdout | shutdownOTel (/home/thc1006/dev/shovel-heroes/packages/backend/src/otel/init.ts:180:13)
+✓ OpenTelemetry: Shutdown complete
+
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/integration/api.test.ts > API Integration Tests
+Error: Failed to create test user: {"message":"Route POST:/register not found","error":"Not Found","statusCode":404}
+ ❯ tests/integration/api.test.ts:36:13
+     34| 
+     35|     if (registerResponse.statusCode !== 201) {
+     36|       throw new Error(`Failed to create test user: ${registerResponse.…
+       |             ^
+     37|     }
+     38| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/202]⎯
+
+ FAIL  tests/integration/volunteer-registrations.test.ts > PUT /volunteer-registrations/:id - Status Updates
+error: column "latitude" of relation "grids" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ tests/integration/volunteer-registrations.test.ts:40:24
+     38| 
+     39|     // Create a test grid
+     40|     const gridResult = await context.pool.query(
+       |                        ^
+     41|       'INSERT INTO grids (name, latitude, longitude) VALUES ($1, $2, $…
+     42|       ['Test Grid', 23.5, 121.5]
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/202]⎯
+
+ FAIL  tests/routes/admin.test.ts > Admin Routes
+TypeError: (0 , buildApp) is not a function
+ ❯ tests/routes/admin.test.ts:14:17
+     12| 
+     13|   beforeAll(async () => {
+     14|     app = await buildApp();
+       |                 ^
+     15| 
+     16|     // Create test super admin
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/202]⎯
+
+ FAIL  tests/routes/admin.test.ts > Admin Routes
+TypeError: Cannot read properties of undefined (reading 'close')
+ ❯ tests/routes/admin.test.ts:91:15
+     89|     await pool.query('DELETE FROM users WHERE id = ANY($1)', [[adminUs…
+     90|     await pool.query('DELETE FROM audit_logs WHERE user_id = $1', [adm…
+     91|     await app.close();
+       |               ^
+     92|   });
+     93| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/202]⎯
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 198 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/grids-post.test.ts > POST /grids > should create a new grid with valid data
+AssertionError: expected '23.5000000' to be 23.5 // Object.is equality
+
+[32m- Expected:[39m 
+23.5
+
+[31m+ Received:[39m 
+"23.5000000"
+
+ ❯ tests/grids-post.test.ts:93:29
+     91|     expect(data.name).toBe('Test Grid');
+     92|     expect(data.grid_type).toBe('manpower');
+     93|     expect(data.center_lat).toBe(23.5);
+       |                             ^
+     94|     expect(data.center_lng).toBe(121.5);
+     95|     expect(data.volunteer_needed).toBe(10);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/202]⎯
+
+ FAIL  tests/grids-post.test.ts > POST /grids > should return 409 for duplicate code
+AssertionError: expected 201 to be 409 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 409[39m
+[31m+ 201[39m
+
+ ❯ tests/grids-post.test.ts:212:42
+    210|     });
+    211| 
+    212|     expect(duplicateResponse.statusCode).toBe(409);
+       |                                          ^
+    213|     const duplicateData = JSON.parse(duplicateResponse.body);
+    214|     expect(duplicateData).toHaveProperty('message', 'Grid code already…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/202]⎯
+
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Complete Disaster Response Workflow > should handle complete workflow: create disaster area → create grid → volunteer registration
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Row-Level Security (RLS) Tests > should enforce RLS policies across multiple users
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Row-Level Security (RLS) Tests > should apply RLS filtering when app.user_id is set
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Rate Limiting Tests > should allow requests within rate limit
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Rate Limiting Tests > should include rate limit headers
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > JWT Authentication Tests > should reject requests with invalid JWT
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > JWT Authentication Tests > should accept valid JWT tokens
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > JWT Authentication Tests > should handle JWT expiration
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Input Validation Tests > should validate disaster area creation payload
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Input Validation Tests > should validate volunteer registration payload
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Input Validation Tests > should validate announcement payload
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Error Handling Tests > should return 404 for non-existent disaster area
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Error Handling Tests > should return 404 when updating non-existent disaster area
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Error Handling Tests > should return 404 when deleting non-existent disaster area
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Error Handling Tests > should return proper JSON error format
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > CRUD Operations Tests > Announcements > should create and list announcements
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > CRUD Operations Tests > Supply Donations > should create and list supply donations
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > CRUD Operations Tests > Grid Discussions > should create and list grid discussions
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should update grid with partial fields
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should update grid JSONB fields (bounds and supplies_needed)
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should update volunteer counts
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should return 404 when updating non-existent grid
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should return current grid when no fields provided
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should validate invalid grid_type in update
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should require authentication for grid updates
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Grid Update Tests > should update updated_at timestamp
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Data Format Tests > should use ISO 8601 format for timestamps
+ FAIL  tests/integration.test.ts > Integration Tests - Full Workflow > Data Format Tests > should use UUIDs for all IDs
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/integration.test.ts:27:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/202]⎯
+
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > RLS Configuration > should have RLS enabled on grids table
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > RLS Configuration > should have 4 policies on grids table
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > SELECT policies > should allow unauthenticated users to view grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > SELECT policies > should allow all authenticated users to view grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > INSERT policies > should allow ngo_coordinator to insert grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > INSERT policies > should allow regional_admin to insert grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > INSERT policies > should prevent volunteer from inserting grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > INSERT policies > should prevent data_analyst from inserting grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > UPDATE policies > should allow super_admin to update grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > UPDATE policies > should allow ngo_coordinator to update grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > UPDATE policies > should prevent volunteer from updating grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > DELETE policies > should allow only super_admin to delete grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > DELETE policies > should prevent ngo_coordinator from deleting grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > DELETE policies > should prevent regional_admin from deleting grids
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > Grid Manager scenarios > should allow grid manager to be assigned
+ FAIL  tests/rls/grids.rls.test.ts > RLS Policies: grids table > Grid Manager scenarios > should verify is_grid_manager helper function works
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/rls/grids.rls.test.ts:27:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/202]⎯
+
+ FAIL  tests/routes/announcements.test.ts > Announcements CRUD - TDD > POST /announcements > Success Cases > should create announcement with valid data and return 201
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/announcements.test.ts:52:37
+     50| 
+     51|         // Assert
+     52|         expect(response.statusCode).toBe(201);
+       |                                     ^
+     53|         const created = response.json();
+     54|         expect(created.title).toBe('Important Update');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/202]⎯
+
+ FAIL  tests/routes/announcements.test.ts > Announcements CRUD - TDD > GET /announcements > Success Cases > should return announcements without authentication (public endpoint)
+AssertionError: expected [ { …(13) }, { …(13) } ] to have a length of 3 but got 2
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 3[39m
+[31m+ 2[39m
+
+ ❯ tests/routes/announcements.test.ts:388:31
+    386|         expect(response.statusCode).toBe(200);
+    387|         const announcements = response.json();
+    388|         expect(announcements).toHaveLength(3);
+       |                               ^
+    389|         expect(announcements[0]).toHaveProperty('id');
+    390|         expect(announcements[0]).toHaveProperty('title');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/202]⎯
+
+ FAIL  tests/routes/announcements.test.ts > Announcements CRUD - TDD > GET /announcements > Success Cases > should limit results to 100 announcements
+AssertionError: expected [ { …(13) }, { …(13) }, …(9) ] to have a length of 100 but got 11
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 100[39m
+[31m+ 11[39m
+
+ ❯ tests/routes/announcements.test.ts:465:31
+    463|         expect(response.statusCode).toBe(200);
+    464|         const announcements = response.json();
+    465|         expect(announcements).toHaveLength(100); // Should limit to 100
+       |                               ^
+    466|       });
+    467|     });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > POST /grid-discussions > Success Cases > should create grid discussion with valid data and return 201
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/grid-discussions.test.ts:54:37
+     52| 
+     53|         // Assert
+     54|         expect(response.statusCode).toBe(201);
+       |                                     ^
+     55|         const created = response.json();
+     56|         expect(created.grid_id).toBe(grid.id);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > POST /grid-discussions > Success Cases > should associate discussion with authenticated user from JWT
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > POST /grid-discussions > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > POST /grid-discussions > Authentication & Authorization > should return 401 when auth token is invalid
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > POST /grid-discussions > Authentication & Authorization > should return 401 when auth token is expired
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should return empty array when no discussions exist
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should return all grid discussions without authentication (public endpoint)
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should order discussions by created_at DESC
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should limit results to 200 discussions
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > GET /grid-discussions > Success Cases > should include discussions from multiple grids
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > Edge Cases & Security > should handle very long content
+error: update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/grid-discussions.test.ts:25:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > POST /grid-discussions > Success Cases > should handle multiple discussions on same grid
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/grid-discussions.test.ts:131:38
+    129| 
+    130|         // Assert
+    131|         expect(response1.statusCode).toBe(201);
+       |                                      ^
+    132|         expect(response2.statusCode).toBe(201);
+    133|         const discussion1 = response1.json();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > Edge Cases & Security > should handle Unicode characters in content
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/grid-discussions.test.ts:553:35
+    551| 
+    552|       // Assert
+    553|       expect(response.statusCode).toBe(201);
+       |                                   ^
+    554|       const created = response.json();
+    555|       expect(created.content).toBe('這裡需要更多志工！😊 Let\'s help together! …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > Edge Cases & Security > should sanitize SQL injection attempts
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/grid-discussions.test.ts:610:35
+    608| 
+    609|       // Assert - Should create successfully with sanitized input
+    610|       expect(response.statusCode).toBe(201);
+       |                                   ^
+    611|       const created = response.json();
+    612|       expect(created.content).toBe("'; DROP TABLE grid_discussions; --…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > Edge Cases & Security > should handle concurrent posts efficiently
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/grid-discussions.test.ts:647:37
+    645|       // Assert - All should succeed
+    646|       responses.forEach((response, i) => {
+    647|         expect(response.statusCode).toBe(201);
+       |                                     ^
+    648|         const created = response.json();
+    649|         expect(created.content).toBe(`Concurrent message ${i + 1}`);
+ ❯ tests/routes/grid-discussions.test.ts:646:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/202]⎯
+
+ FAIL  tests/routes/grid-discussions.test.ts > Grid Discussions Routes - TDD > Edge Cases & Security > should handle XSS attempts in content
+AssertionError: expected 500 to be 201 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 201[39m
+[31m+ 500[39m
+
+ ❯ tests/routes/grid-discussions.test.ts:683:35
+    681| 
+    682|       // Assert - Should store as-is (sanitization should happen on fr…
+    683|       expect(response.statusCode).toBe(201);
+       |                                   ^
+    684|       const created = response.json();
+    685|       expect(created.content).toBe('<script>alert("XSS")</script>');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/202]⎯
+
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Success Cases > should create grid with valid minimal data and return 201
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Success Cases > should create grid with all optional fields
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Success Cases > should create grid with null area_id (not linked to disaster area)
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when code is missing
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when grid_type is invalid
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when center_lat is out of range
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when center_lng is out of range
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when bounds format is invalid
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Validation Failures > should return 400 when volunteer_needed is negative
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Authentication & Authorization > should return 401 when auth token is invalid
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Authentication & Authorization > should return 401 when auth token is expired
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Duplicate Code Handling > should return 409 when grid code already exists
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > POST /grids > Foreign Key Constraints > should return 400 or 404 when area_id references non-existent disaster area
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Success Cases > should return empty array when no grids exist
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Success Cases > should return all grids without authentication (public endpoint)
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Success Cases > should filter grids by area_id query parameter
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Success Cases > should return grids ordered by code
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Success Cases > should limit results to 100 grids
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Success Cases > should include all grid fields in response
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Query Parameter Validation > should return 400 when area_id is not a valid UUID
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > GET /grids > Query Parameter Validation > should return empty array when filtering by non-existent area_id
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update grid with valid data and return 200
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should support partial updates (only update provided fields)
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update bounds field with valid GeoJSON-like structure
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update supplies_needed array
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Success Cases > should update volunteer counts
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Validation Failures > should return 400 when status has invalid value
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > PUT /grids/:id > Validation Failures > should return 400 when grid_type has invalid value
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/grids.test.ts:26:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/202]⎯
+
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > DELETE /grids/:id > Success Cases > should cascade delete supply_donations when grid is deleted
+error: column "name" of relation "supply_donations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ tests/routes/grids.test.ts:1162:9
+    1160| 
+    1161|         // Create supply donations
+    1162|         await pool.query(
+       |         ^
+    1163|           `INSERT INTO supply_donations (id, grid_id, name, quantity, …
+    1164|            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/202]⎯
+
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > DELETE /grids/:id > Success Cases > should cascade delete grid_discussions when grid is deleted
+error: column "content" of relation "grid_discussions" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ tests/routes/grids.test.ts:1209:9
+    1207| 
+    1208|         // Create grid discussions
+    1209|         await pool.query(
+       |         ^
+    1210|           `INSERT INTO grid_discussions (id, grid_id, user_id, content)
+    1211|            VALUES (gen_random_uuid(), $1, $2, $3)`,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/202]⎯
+
+ FAIL  tests/routes/grids.test.ts > Grids CRUD - TDD London School > Edge Cases & Security > should handle concurrent updates correctly
+error: update or delete on table "users" violates foreign key constraint "announcements_author_id_fkey" on table "announcements"
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/grids.test.ts:26:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/202]⎯
+
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Success Cases > should create supply donation with valid data and return 201
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Success Cases > should create supply donation without optional donor_contact
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when grid_id is missing
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when grid_id is not a valid UUID
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when donor_name is empty
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when quantity is negative
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when quantity is zero
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Validation Failures > should return 400 when quantity is not an integer
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > POST /supply-donations > Authentication & Authorization > should return 401 when auth token is invalid
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should return empty array when no supply donations exist
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should return all supply donations without authentication (public endpoint)
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should order donations by created_at DESC
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > GET /supply-donations > Success Cases > should limit results to 200 donations
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Success Cases > should update supply donation status and return 200
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Success Cases > should update quantity and notes
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Success Cases > should support partial updates
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Validation Failures > should return 400 when status has invalid value
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Validation Failures > should return 400 when quantity is negative
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Not Found Cases > should return 404 when supply donation does not exist
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > PUT /supply-donations/:id > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > DELETE /supply-donations/:id > Success Cases > should delete supply donation successfully and return 204
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > DELETE /supply-donations/:id > Not Found Cases > should return 404 when supply donation does not exist
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > DELETE /supply-donations/:id > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > Edge Cases & Security > should handle concurrent updates correctly
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > Edge Cases & Security > should handle Unicode characters in text fields
+ FAIL  tests/routes/supply-donations.test.ts > Supply Donations CRUD - TDD > Edge Cases & Security > should sanitize SQL injection attempts
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/supply-donations.test.ts:25:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/202]⎯
+
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /users > Success Cases > should return empty array when no users exist
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /users > Success Cases > should return all users without authentication (public endpoint)
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /users > Success Cases > should limit results to 100 users
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /users > Success Cases > should not expose sensitive information
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /users > Edge Cases > should handle Unicode characters in names
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /users > Edge Cases > should handle null phone numbers
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Success Cases > should return current user info when authenticated
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Success Cases > should upsert user if not exists in database (JWT-based auth)
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Success Cases > should return user with all expected fields
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Authentication Failures > should return 401 when no auth token is provided
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Authentication Failures > should return 401 when auth token is invalid
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Authentication Failures > should return 401 when auth token is expired
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Authentication Failures > should return 401 when auth token is malformed
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Authentication Failures > should return 401 when authorization header is missing Bearer prefix
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Edge Cases > should handle concurrent requests from same user
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > GET /me > Edge Cases > should handle very long email addresses
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > Security > should not expose other users data via /me endpoint
+ FAIL  tests/routes/users.test.ts > Users Routes - TDD > Security > should sanitize SQL injection attempts in JWT sub claim
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/users.test.ts:23:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/202]⎯
+
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Success Cases > should create volunteer registration with valid data and return 201
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Success Cases > should allow user to register themselves as volunteer
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Success Cases > should allow multiple volunteers to register for same grid
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when grid_id is missing
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when volunteer_id is missing
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when grid_id is not a valid UUID
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should return 400 when volunteer_id is not a valid UUID
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Validation Failures > should handle non-existent grid_id
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > POST /volunteer-registrations > Authentication & Authorization > should return 401 when auth token is invalid
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should return empty array when no registrations exist
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should return all registrations without authentication (public endpoint)
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should order registrations by created_at DESC
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > GET /volunteer-registrations > Success Cases > should limit results to 200 registrations
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Success Cases > should update registration status and return 200
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Success Cases > should allow volunteer to update their own registration
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Success Cases > should support all valid status transitions
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Validation Failures > should return 400 when status has invalid value
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Not Found Cases > should return 404 when registration does not exist
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > PUT /volunteer-registrations/:id > Authentication & Authorization > should prevent user from updating other volunteers registrations
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Success Cases > should delete registration successfully and return 204
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Success Cases > should allow volunteer to cancel their own registration
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Not Found Cases > should return 404 when registration does not exist
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Authentication & Authorization > should return 401 when no auth token is provided
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > DELETE /volunteer-registrations/:id > Authentication & Authorization > should prevent user from deleting other volunteers registrations
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > Edge Cases & Security > should handle concurrent registrations for same volunteer
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > Edge Cases & Security > should handle duplicate registration attempts
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > Edge Cases & Security > should handle rapid status updates
+ FAIL  tests/routes/volunteer-registrations.test.ts > Volunteer Registrations CRUD - TDD > Edge Cases & Security > should validate UUID format in URL parameters
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/volunteer-registrations.test.ts:26:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/202]⎯
+
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should return empty array when no volunteers exist
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should return volunteers with basic information
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should mask phone numbers when can_view_phone is false (no auth)
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should show masked phone numbers when authenticated (can_view_phone is true)
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should filter volunteers by grid_id
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should support pagination with limit and offset
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should include status_counts when include_counts=true
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should not include status_counts when include_counts=false
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Success Cases > should order volunteers by created_at DESC
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Query Parameter Validation > should return 400 when grid_id is not a valid UUID
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Query Parameter Validation > should handle negative limit gracefully
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Query Parameter Validation > should handle negative offset gracefully
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Phone Masking Logic > should mask phone number correctly for standard format
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Phone Masking Logic > should handle short phone numbers
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Phone Masking Logic > should handle null phone numbers
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Edge Cases > should handle volunteers with null names
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Edge Cases > should handle very large result sets with pagination
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Edge Cases > should handle concurrent requests efficiently
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > Security > should not leak sensitive information in error messages
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Unauthenticated Users > should NOT see phone numbers for unauthenticated requests
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Admin Users > should see full phone numbers for super_admin
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Admin Users > should see full phone numbers for regional_admin
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Grid Manager Users > should see phone numbers for volunteers in THEIR grids
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Grid Manager Users > should NOT see phone numbers for volunteers in OTHER grids
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Grid Manager Users > should handle grid with no manager (no permission)
+ FAIL  tests/routes/volunteers.test.ts > Volunteers Routes - TDD > GET /volunteers > RBAC - Phone Number Visibility > Regular Volunteer Users > should NOT see phone numbers for regular volunteer users
+error: relation "volunteer_registrations" does not exist
+ ❯ ../../node_modules/pg-pool/index.js:45:11
+ ❯ cleanDatabase tests/helpers.ts:119:5
+    117| 
+    118|   for (const table of tables) {
+    119|     await pool.query(`DELETE FROM ${table}`);
+       |     ^
+    120|   }
+    121| }
+ ❯ tests/routes/volunteers.test.ts:26:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/202]⎯
+
+
+ Test Files  13 failed | 7 passed (20)
+      Tests  198 failed | 152 passed | 48 skipped (398)
+   Start at  14:45:48
+   Duration  12.31s (transform 3.29s, setup 0ms, collect 21.89s, tests 25.16s, environment 44ms, prepare 6.41s)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /home/thc1006/dev/shovel-heroes/packages/backend
+npm error workspace shovel-backend@0.1.0
+npm error location /home/thc1006/dev/shovel-heroes/packages/backend
+npm error command failed
+npm error command sh -c vitest run

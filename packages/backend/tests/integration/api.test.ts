@@ -21,14 +21,15 @@ describe('API Integration Tests', () => {
     const testUserEmail = `test-${Date.now()}@example.com`;
     const testUserPassword = 'TestPassword123!';
 
-    // Register test user
+    // Register test user using /auth/register
     const registerResponse = await app.inject({
       method: 'POST',
-      url: '/register',
+      url: '/auth/register',
       payload: {
         email: testUserEmail,
         password: testUserPassword,
-        name: 'Test User'
+        role: 'volunteer',
+        full_name: 'Test User'
       }
     });
 
@@ -36,12 +37,12 @@ describe('API Integration Tests', () => {
       throw new Error(`Failed to create test user: ${registerResponse.body}`);
     }
 
-    testUserId = JSON.parse(registerResponse.body).id;
+    testUserId = JSON.parse(registerResponse.body).userId;
 
-    // Login to get token
+    // Login to get token using /auth/login
     const loginResponse = await app.inject({
       method: 'POST',
-      url: '/login',
+      url: '/auth/login',
       payload: {
         email: testUserEmail,
         password: testUserPassword
@@ -52,7 +53,7 @@ describe('API Integration Tests', () => {
       throw new Error(`Failed to login: ${loginResponse.body}`);
     }
 
-    authToken = JSON.parse(loginResponse.body).token;
+    authToken = JSON.parse(loginResponse.body).accessToken;
 
     // Create test disaster area
     testAreaId = await createTestDisasterArea();
@@ -71,10 +72,10 @@ describe('API Integration Tests', () => {
   async function createTestDisasterArea(): Promise<string> {
     const result = await withConn(async (c) => {
       const { rows } = await c.query(
-        `INSERT INTO disaster_areas (name, location, disaster_type, severity, status)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO disaster_areas (name, location, severity, status)
+         VALUES ($1, $2, $3, $4)
          RETURNING id`,
-        [`Test Area ${Date.now()}`, 'Test Location', 'flood', 'moderate', 'active']
+        [`Test Area ${Date.now()}`, 'Test Location', 'medium', 'active']
       );
       return rows[0].id;
     });
@@ -115,6 +116,7 @@ describe('API Integration Tests', () => {
         },
         payload: {
           code: `TEST-GRID-${Date.now()}`,
+          name: 'Test Grid Area',
           grid_type: 'manpower',
           area_id: testAreaId,
           center_lat: 23.5,
@@ -194,7 +196,8 @@ describe('API Integration Tests', () => {
         },
         payload: {
           code: `DELETE-TEST-${Date.now()}`,
-          grid_type: 'supply',
+          name: 'Delete Test Grid',
+          grid_type: 'supply_storage',
           area_id: testAreaId,
           center_lat: 23.5,
           center_lng: 121.5
@@ -225,6 +228,24 @@ describe('API Integration Tests', () => {
 
   describe('2. Volunteer Registrations', () => {
     it('POST /volunteer-registrations - should create registration', async () => {
+      // First create/get volunteer record for the user
+      const volunteerResult = await withConn(async (c) => {
+        // Check if volunteer exists
+        const { rows: existing } = await c.query(
+          'SELECT id FROM volunteers WHERE user_id = $1',
+          [testUserId]
+        );
+        if (existing.length > 0) {
+          return existing[0].id;
+        }
+        // Create volunteer record
+        const { rows } = await c.query(
+          'INSERT INTO volunteers (user_id, name, email, phone, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+          [testUserId, 'Test Volunteer', 'test@example.com', '0912-345-678', 'available']
+        );
+        return rows[0].id;
+      }, testUserId);
+
       const response = await app.inject({
         method: 'POST',
         url: '/volunteer-registrations',
@@ -233,7 +254,7 @@ describe('API Integration Tests', () => {
         },
         payload: {
           grid_id: testGridId,
-          user_id: testUserId
+          volunteer_id: volunteerResult
         }
       });
 
@@ -284,7 +305,8 @@ describe('API Integration Tests', () => {
         },
         payload: {
           grid_id: testGridId,
-          name: '飲用水',
+          donor_name: 'Test Donor',
+          item_type: '飲用水',
           quantity: 100,
           unit: '箱',
           donor_contact: 'test@example.com'
@@ -294,7 +316,7 @@ describe('API Integration Tests', () => {
       expect(response.statusCode).toBe(201);
       const data = JSON.parse(response.body);
       expect(data).toHaveProperty('id');
-      expect(data.name).toBe('飲用水');
+      expect(data.item_type).toBe('飲用水');
       testSupplyDonationId = data.id;
     });
 
@@ -306,13 +328,13 @@ describe('API Integration Tests', () => {
           authorization: `Bearer ${authToken}`
         },
         payload: {
-          status: 'delivered'
+          status: 'confirmed'
         }
       });
 
       expect(response.statusCode).toBe(200);
       const data = JSON.parse(response.body);
-      expect(data.status).toBe('delivered');
+      expect(data.status).toBe('confirmed');
     });
 
     it('DELETE /supply-donations/:id - should delete donation', async () => {
@@ -325,7 +347,8 @@ describe('API Integration Tests', () => {
         },
         payload: {
           grid_id: testGridId,
-          name: '臨時物資',
+          donor_name: 'Temp Donor',
+          item_type: '臨時物資',
           quantity: 10,
           unit: '箱'
         }
@@ -427,6 +450,21 @@ describe('API Integration Tests', () => {
       const targetGrid = initialGrids.find((g: any) => g.id === testGridId);
       const initialCount = targetGrid?.volunteer_registered || 0;
 
+      // Get/create volunteer ID for the test user
+      const testVolunteerIdForIncrement = await withConn(async (c) => {
+        const { rows: existing } = await c.query(
+          'SELECT id FROM volunteers WHERE user_id = $1',
+          [testUserId]
+        );
+        if (existing.length > 0) return existing[0].id;
+
+        const { rows } = await c.query(
+          'INSERT INTO volunteers (user_id, name, email, phone, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+          [testUserId, 'Test Volunteer', 'test-vol3@example.com', '0912-345-680', 'available']
+        );
+        return rows[0].id;
+      }, testUserId);
+
       // Create new registration
       const regResponse = await app.inject({
         method: 'POST',
@@ -436,7 +474,7 @@ describe('API Integration Tests', () => {
         },
         payload: {
           grid_id: testGridId,
-          user_id: testUserId
+          volunteer_id: testVolunteerIdForIncrement
         }
       });
 
@@ -465,6 +503,21 @@ describe('API Integration Tests', () => {
     });
 
     it('should auto-decrement volunteer_registered on deletion', async () => {
+      // Get/create volunteer ID for the test user
+      const testVolunteerIdForDecrement = await withConn(async (c) => {
+        const { rows: existing } = await c.query(
+          'SELECT id FROM volunteers WHERE user_id = $1',
+          [testUserId]
+        );
+        if (existing.length > 0) return existing[0].id;
+
+        const { rows } = await c.query(
+          'INSERT INTO volunteers (user_id, name, email, phone, status) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+          [testUserId, 'Test Volunteer', 'test-vol4@example.com', '0912-345-681', 'available']
+        );
+        return rows[0].id;
+      }, testUserId);
+
       // Create registration
       const regResponse = await app.inject({
         method: 'POST',
@@ -474,7 +527,7 @@ describe('API Integration Tests', () => {
         },
         payload: {
           grid_id: testGridId,
-          user_id: testUserId
+          volunteer_id: testVolunteerIdForDecrement
         }
       });
 

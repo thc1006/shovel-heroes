@@ -37,28 +37,30 @@ function maskPhone(phone: string | null): string | undefined {
 
 /**
  * Determine if authenticated user can view phone numbers
- * Rules:
- * 1. Admins (super_admin, regional_admin) can ALWAYS view
- * 2. Grid Managers (ngo_coordinator) can view for THEIR grids only
- * 3. Regular users CANNOT view
- * 4. Unauthenticated users CANNOT view
+ * Rules (STRICT RBAC):
+ * 1. Unauthenticated users CANNOT view (can_view_phone = false)
+ * 2. Admins (super_admin, regional_admin) can ALWAYS view FULL phones
+ * 3. Grid Managers (ngo_coordinator) can view FULL phones ONLY for THEIR grids when grid_id is specified
+ * 4. Regular users (volunteer, etc.) CANNOT view phones (can_view_phone = false)
+ *
+ * @returns { canView: boolean, showFullPhone: boolean }
  */
 async function canViewPhoneNumbers(
   userId: string | undefined,
   userRole: string | undefined,
   gridId: string | undefined
-): Promise<boolean> {
-  // No auth = no phone access
+): Promise<{ canView: boolean; showFullPhone: boolean }> {
+  // No auth = no phone access at all
   if (!userId || !userRole) {
-    return false;
+    return { canView: false, showFullPhone: false };
   }
 
-  // Admins can always view
+  // Admins can always view FULL phones
   if (userRole === 'super_admin' || userRole === 'regional_admin') {
-    return true;
+    return { canView: true, showFullPhone: true };
   }
 
-  // Grid managers can view only for their grids
+  // Grid managers can view FULL phones only for their grids (when grid_id is specified)
   if (userRole === 'ngo_coordinator' && gridId) {
     try {
       const result = await pool.query(
@@ -67,23 +69,27 @@ async function canViewPhoneNumbers(
       );
 
       if (result.rows.length > 0 && result.rows[0].grid_manager_id === userId) {
-        return true;
+        return { canView: true, showFullPhone: true };
       }
     } catch (error) {
       // Log error but deny access on failure
       console.error('Error checking grid manager:', error);
-      return false;
+      return { canView: false, showFullPhone: false };
     }
   }
 
-  // Default: no access
-  return false;
+  // Default: regular users and unauthorized grid managers CANNOT view phones
+  return { canView: false, showFullPhone: false };
 }
 
 export function registerVolunteersRoutes(app: FastifyInstance) {
   app.get('/volunteers', async (req: any, reply) => {
     try {
       const { grid_id, status, limit = 200, offset = 0, include_counts = 'true' } = req.query as any;
+
+      // Validate query parameters
+      const parsedLimit = Math.max(0, Number(limit) || 200);
+      const parsedOffset = Math.max(0, Number(offset) || 0);
 
       // We don't actually have status column in volunteer_registrations yet.
       // Frontend expects statuses; we will default all to 'pending' until schema evolves.
@@ -93,6 +99,12 @@ export function registerVolunteersRoutes(app: FastifyInstance) {
       const params: any[] = [];
       let paramIndex = 1;
       if (grid_id) {
+        // Validate UUID format (basic check)
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(grid_id)) {
+          // Invalid UUID - return empty results instead of error
+          return { data: [], can_view_phone: false, total: 0, limit: parsedLimit, page: 1 };
+        }
         conditions.push(`vr.grid_id = $${paramIndex++}`);
         params.push(grid_id);
       }
@@ -112,7 +124,7 @@ export function registerVolunteersRoutes(app: FastifyInstance) {
                      ${where}
                      ORDER BY vr.created_at DESC
                      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-        const queryParams = [...params, Number(limit), Number(offset)];
+        const queryParams = [...params, parsedLimit, parsedOffset];
         const { rows } = await c.query(sql, queryParams);
         return rows as RawRow[];
       });
@@ -143,22 +155,33 @@ export function registerVolunteersRoutes(app: FastifyInstance) {
       }
 
       // Determine if user can view phone numbers based on RBAC
-      const can_view_phone = await canViewPhoneNumbers(userId, userRole, grid_id);
+      const phoneAccess = await canViewPhoneNumbers(userId, userRole, grid_id);
+      const can_view_phone = phoneAccess.canView;
+      const showFullPhone = phoneAccess.showFullPhone;
 
       // Map rows to VolunteerListItem spec shape
-      const data = rows.map(r => ({
-        id: r.id,
-        grid_id: r.grid_id,
-        user_id: r.volunteer_id,
-        volunteer_name: r.volunteer_name || '匿名志工',
-        volunteer_phone: can_view_phone ? r.volunteer_phone : undefined,
-        status: 'pending',
-        available_time: null,
-        skills: [],
-        equipment: [],
-        notes: null,
-        created_date: r.created_at
-      }));
+      const data = rows.map(r => {
+        let displayPhone: string | undefined;
+
+        if (can_view_phone && r.volunteer_phone) {
+          // Show full phone for admins and grid managers, masked for others
+          displayPhone = showFullPhone ? r.volunteer_phone : maskPhone(r.volunteer_phone);
+        }
+
+        return {
+          id: r.id,
+          grid_id: r.grid_id,
+          user_id: r.volunteer_id,
+          volunteer_name: (r.volunteer_name && r.volunteer_name.trim()) || '匿名志工',
+          volunteer_phone: displayPhone,
+          status: 'pending',
+          available_time: null,
+          skills: [],
+          equipment: [],
+          notes: null,
+          created_date: r.created_at
+        };
+      });
 
       let status_counts: any = undefined;
       if (include_counts !== 'false') {
@@ -174,7 +197,7 @@ export function registerVolunteersRoutes(app: FastifyInstance) {
         return countRows[0]?.c ?? data.length;
       });
 
-      return { data, can_view_phone, total, status_counts, limit: Number(limit), page: Math.floor(Number(offset) / Number(limit)) + 1 };
+      return { data, can_view_phone, total, status_counts, limit: parsedLimit, page: Math.floor(parsedOffset / parsedLimit) + 1 };
     } catch (err: any) {
       app.log.error(err);
       return reply.code(500).send({ message: 'Internal error' });

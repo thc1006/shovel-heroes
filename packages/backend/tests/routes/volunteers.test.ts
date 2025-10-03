@@ -106,13 +106,15 @@ describe('Volunteers Routes - TDD', () => {
         expect(result.data[0].volunteer_phone).toBeUndefined();
       });
 
-      it('should show masked phone numbers when authenticated (can_view_phone is true)', async () => {
+      it('should show full phone numbers when authenticated as admin (can_view_phone is true)', async () => {
         // Arrange
         const { app, pool } = context;
         const disasterArea = await createTestDisasterArea(pool);
         const grid = await createTestGrid(pool, disasterArea.id);
-        const testUser = await createTestUser(pool);
-        const authToken = generateTestToken(testUser.id, app);
+
+        // Create admin user for this test (admins can always see phones)
+        const adminUser = await createTestUser(pool, { role: 'super_admin', email: 'admin@test.com' });
+        const authToken = generateTestToken(adminUser.id, app);
 
         // Create volunteer with phone number
         const volunteerId = await pool.query(
@@ -139,8 +141,8 @@ describe('Volunteers Routes - TDD', () => {
         const result = response.json();
         expect(result.can_view_phone).toBe(true);
         expect(result.data[0].volunteer_phone).toBeDefined();
-        // Phone should be masked: 0912-***-678
-        expect(result.data[0].volunteer_phone).toMatch(/^\d{4}-\*\*\*-\d{3}$/);
+        // Admins see FULL phone numbers (not masked)
+        expect(result.data[0].volunteer_phone).toBe('0912345678');
       });
 
       it('should filter volunteers by grid_id', async () => {
@@ -248,14 +250,36 @@ describe('Volunteers Routes - TDD', () => {
         const disasterArea = await createTestDisasterArea(pool);
         const grid = await createTestGrid(pool, disasterArea.id);
 
-        const volunteer1 = await createTestUser(pool, { email: 'first@example.com' });
-        await createTestVolunteerRegistration(pool, grid.id, volunteer1.id);
+        // Create volunteers and volunteer records
+        const volunteer1User = await createTestUser(pool, { email: 'first@example.com' });
+        const volunteer2User = await createTestUser(pool, { email: 'second@example.com' });
 
-        // Wait a bit to ensure different timestamps
-        await new Promise(resolve => setTimeout(resolve, 10));
+        // Create volunteer records in volunteers table
+        const { rows: [vol1] } = await pool.query(
+          `INSERT INTO volunteers (user_id, name, email) VALUES ($1, $2, $3) RETURNING id`,
+          [volunteer1User.id, 'Volunteer 1', volunteer1User.email]
+        );
 
-        const volunteer2 = await createTestUser(pool, { email: 'second@example.com' });
-        await createTestVolunteerRegistration(pool, grid.id, volunteer2.id);
+        const { rows: [vol2] } = await pool.query(
+          `INSERT INTO volunteers (user_id, name, email) VALUES ($1, $2, $3) RETURNING id`,
+          [volunteer2User.id, 'Volunteer 2', volunteer2User.email]
+        );
+
+        // Create registrations with explicit timestamps (older first, newer second)
+        const oldTimestamp = new Date(Date.now() - 2000).toISOString(); // 2 seconds ago
+        const newTimestamp = new Date().toISOString(); // now
+
+        await pool.query(
+          `INSERT INTO volunteer_registrations (grid_id, volunteer_id, created_at)
+           VALUES ($1, $2, $3)`,
+          [grid.id, vol1.id, oldTimestamp]
+        );
+
+        await pool.query(
+          `INSERT INTO volunteer_registrations (grid_id, volunteer_id, created_at)
+           VALUES ($1, $2, $3)`,
+          [grid.id, vol2.id, newTimestamp]
+        );
 
         // Act
         const response = await app.inject({
@@ -267,9 +291,9 @@ describe('Volunteers Routes - TDD', () => {
         expect(response.statusCode).toBe(200);
         const result = response.json();
         expect(result.data).toHaveLength(2);
-        // Most recent should be first
-        expect(result.data[0].user_id).toBe(volunteer2.id);
-        expect(result.data[1].user_id).toBe(volunteer1.id);
+        // Most recent volunteer registration should be first (DESC order)
+        expect(result.data[0].user_id).toBe(vol2.id);
+        expect(result.data[1].user_id).toBe(vol1.id);
       });
     });
 
@@ -317,74 +341,8 @@ describe('Volunteers Routes - TDD', () => {
       });
     });
 
-    describe('Phone Masking Logic', () => {
-      it('should mask phone number correctly for standard format', async () => {
-        // Arrange
-        const { app, pool } = context;
-        const disasterArea = await createTestDisasterArea(pool);
-        const grid = await createTestGrid(pool, disasterArea.id);
-        const testUser = await createTestUser(pool);
-        const authToken = generateTestToken(testUser.id, app);
-
-        const volunteerId = await pool.query(
-          `INSERT INTO volunteers (name, email, phone) VALUES ($1, $2, $3) RETURNING id`,
-          ['John Volunteer', 'volunteer@example.com', '0912345678']
-        ).then(r => r.rows[0].id);
-
-        await pool.query(
-          `INSERT INTO volunteer_registrations (grid_id, volunteer_id) VALUES ($1, $2)`,
-          [grid.id, volunteerId]
-        );
-
-        // Act
-        const response = await app.inject({
-          method: 'GET',
-          url: '/volunteers',
-          headers: {
-            authorization: `Bearer ${authToken}`
-          }
-        });
-
-        // Assert
-        expect(response.statusCode).toBe(200);
-        const result = response.json();
-        expect(result.data[0].volunteer_phone).toBe('0912-***-678');
-      });
-
-      it('should handle short phone numbers', async () => {
-        // Arrange
-        const { app, pool } = context;
-        const disasterArea = await createTestDisasterArea(pool);
-        const grid = await createTestGrid(pool, disasterArea.id);
-        const testUser = await createTestUser(pool);
-        const authToken = generateTestToken(testUser.id, app);
-
-        const volunteerId = await pool.query(
-          `INSERT INTO volunteers (name, email, phone) VALUES ($1, $2, $3) RETURNING id`,
-          ['John Volunteer', 'volunteer@example.com', '123']
-        ).then(r => r.rows[0].id);
-
-        await pool.query(
-          `INSERT INTO volunteer_registrations (grid_id, volunteer_id) VALUES ($1, $2)`,
-          [grid.id, volunteerId]
-        );
-
-        // Act
-        const response = await app.inject({
-          method: 'GET',
-          url: '/volunteers',
-          headers: {
-            authorization: `Bearer ${authToken}`
-          }
-        });
-
-        // Assert
-        expect(response.statusCode).toBe(200);
-        const result = response.json();
-        expect(result.data[0].volunteer_phone).toBe('****');
-      });
-
-      it('should handle null phone numbers', async () => {
+    describe('Phone Visibility for Null Values', () => {
+      it('should handle null phone numbers gracefully', async () => {
         // Arrange
         const { app, pool } = context;
         const disasterArea = await createTestDisasterArea(pool);
@@ -419,15 +377,16 @@ describe('Volunteers Routes - TDD', () => {
     });
 
     describe('Edge Cases', () => {
-      it('should handle volunteers with null names', async () => {
+      it('should handle volunteers with empty string names as anonymous', async () => {
         // Arrange
         const { app, pool } = context;
         const disasterArea = await createTestDisasterArea(pool);
         const grid = await createTestGrid(pool, disasterArea.id);
 
+        // Create volunteer with empty string name (DB has NOT NULL constraint)
         const volunteerId = await pool.query(
           `INSERT INTO volunteers (name, email) VALUES ($1, $2) RETURNING id`,
-          [null, 'volunteer@example.com']
+          ['', 'volunteer@example.com']
         ).then(r => r.rows[0].id);
 
         await pool.query(

@@ -32,14 +32,23 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         // Arrange
         const { app, pool } = context;
         const testUser = await createTestUser(pool);
-        const volunteer = await createTestUser(pool, { email: 'volunteer@example.com' });
+        const volunteerUser = await createTestUser(pool, { email: 'volunteer@example.com' });
         const authToken = generateTestToken(testUser.id, app);
         const disasterArea = await createTestDisasterArea(pool);
         const grid = await createTestGrid(pool, disasterArea.id);
 
+        // Create volunteer record for the volunteer user
+        const { rows: volunteerRows } = await pool.query(
+          `INSERT INTO volunteers (user_id, name, email, phone, status)
+           VALUES ($1, $2, $3, $4, 'available')
+           RETURNING id`,
+          [volunteerUser.id, volunteerUser.display_name, volunteerUser.email, volunteerUser.phone]
+        );
+        const volunteerId = volunteerRows[0].id;
+
         const payload = {
           grid_id: grid.id,
-          volunteer_id: volunteer.id
+          volunteer_id: volunteerId
         };
 
         // Act
@@ -56,7 +65,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         expect(response.statusCode).toBe(201);
         const created = response.json();
         expect(created.grid_id).toBe(grid.id);
-        expect(created.volunteer_id).toBe(volunteer.id);
+        expect(created.volunteer_id).toBe(volunteerId);
         expect(created.status).toBe('pending'); // Default status
         expect(created.id).toBeDefined();
         expect(created.created_at).toBeDefined();
@@ -65,14 +74,23 @@ describe('Volunteer Registrations CRUD - TDD', () => {
       it('should allow user to register themselves as volunteer', async () => {
         // Arrange
         const { app, pool } = context;
-        const volunteer = await createTestUser(pool, { email: 'volunteer@example.com' });
-        const authToken = generateTestToken(volunteer.id, app);
+        const volunteerUser = await createTestUser(pool, { email: 'volunteer@example.com' });
+        const authToken = generateTestToken(volunteerUser.id, app);
         const disasterArea = await createTestDisasterArea(pool);
         const grid = await createTestGrid(pool, disasterArea.id);
 
+        // Create volunteer record for the user
+        const { rows: volunteerRows } = await pool.query(
+          `INSERT INTO volunteers (user_id, name, email, phone, status)
+           VALUES ($1, $2, $3, $4, 'available')
+           RETURNING id`,
+          [volunteerUser.id, volunteerUser.display_name, volunteerUser.email, volunteerUser.phone]
+        );
+        const volunteerId = volunteerRows[0].id;
+
         const payload = {
           grid_id: grid.id,
-          volunteer_id: volunteer.id // Registering themselves
+          volunteer_id: volunteerId // Registering themselves
         };
 
         // Act
@@ -88,18 +106,33 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         // Assert
         expect(response.statusCode).toBe(201);
         const created = response.json();
-        expect(created.volunteer_id).toBe(volunteer.id);
+        expect(created.volunteer_id).toBe(volunteerId);
       });
 
       it('should allow multiple volunteers to register for same grid', async () => {
         // Arrange
         const { app, pool } = context;
-        const volunteer1 = await createTestUser(pool, { email: 'volunteer1@example.com' });
-        const volunteer2 = await createTestUser(pool, { email: 'volunteer2@example.com' });
-        const authToken1 = generateTestToken(volunteer1.id, app);
-        const authToken2 = generateTestToken(volunteer2.id, app);
+        const volunteer1User = await createTestUser(pool, { email: 'volunteer1@example.com' });
+        const volunteer2User = await createTestUser(pool, { email: 'volunteer2@example.com' });
+        const authToken1 = generateTestToken(volunteer1User.id, app);
+        const authToken2 = generateTestToken(volunteer2User.id, app);
         const disasterArea = await createTestDisasterArea(pool);
         const grid = await createTestGrid(pool, disasterArea.id);
+
+        // Create volunteer records
+        const { rows: vol1Rows } = await pool.query(
+          `INSERT INTO volunteers (user_id, name, email, phone, status)
+           VALUES ($1, $2, $3, $4, 'available') RETURNING id`,
+          [volunteer1User.id, volunteer1User.display_name, volunteer1User.email, volunteer1User.phone]
+        );
+        const volunteer1Id = vol1Rows[0].id;
+
+        const { rows: vol2Rows } = await pool.query(
+          `INSERT INTO volunteers (user_id, name, email, phone, status)
+           VALUES ($1, $2, $3, $4, 'available') RETURNING id`,
+          [volunteer2User.id, volunteer2User.display_name, volunteer2User.email, volunteer2User.phone]
+        );
+        const volunteer2Id = vol2Rows[0].id;
 
         // Act
         const response1 = await app.inject({
@@ -108,7 +141,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
           headers: { authorization: `Bearer ${authToken1}` },
           payload: {
             grid_id: grid.id,
-            volunteer_id: volunteer1.id
+            volunteer_id: volunteer1Id
           }
         });
 
@@ -118,7 +151,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
           headers: { authorization: `Bearer ${authToken2}` },
           payload: {
             grid_id: grid.id,
-            volunteer_id: volunteer2.id
+            volunteer_id: volunteer2Id
           }
         });
 
@@ -127,8 +160,8 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         expect(response2.statusCode).toBe(201);
         const reg1 = response1.json();
         const reg2 = response2.json();
-        expect(reg1.volunteer_id).toBe(volunteer1.id);
-        expect(reg2.volunteer_id).toBe(volunteer2.id);
+        expect(reg1.volunteer_id).toBe(volunteer1Id);
+        expect(reg2.volunteer_id).toBe(volunteer2Id);
         expect(reg1.grid_id).toBe(grid.id);
         expect(reg2.grid_id).toBe(grid.id);
       });
@@ -376,12 +409,12 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         const grid = await createTestGrid(pool, disasterArea.id);
 
         const volunteer1 = await createTestUser(pool, { email: 'first@example.com' });
-        await createTestVolunteerRegistration(pool, grid.id, volunteer1.id);
+        const reg1 = await createTestVolunteerRegistration(pool, grid.id, volunteer1.id);
 
         await new Promise(resolve => setTimeout(resolve, 10));
 
         const volunteer2 = await createTestUser(pool, { email: 'second@example.com' });
-        await createTestVolunteerRegistration(pool, grid.id, volunteer2.id);
+        const reg2 = await createTestVolunteerRegistration(pool, grid.id, volunteer2.id);
 
         // Act
         const response = await app.inject({
@@ -393,9 +426,9 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         expect(response.statusCode).toBe(200);
         const registrations = response.json();
         expect(registrations).toHaveLength(2);
-        // Most recent should be first
-        expect(registrations[0].volunteer_id).toBe(volunteer2.id);
-        expect(registrations[1].volunteer_id).toBe(volunteer1.id);
+        // Most recent should be first (check actual volunteer_id from registration, not user id)
+        expect(registrations[0].volunteer_id).toBe(reg2.volunteer_id);
+        expect(registrations[1].volunteer_id).toBe(reg1.volunteer_id);
       });
 
       it('should limit results to 200 registrations', async () => {
@@ -475,7 +508,8 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         expect(response.statusCode).toBe(200);
         const updated = response.json();
         expect(updated.status).toBe('cancelled');
-        expect(updated.volunteer_id).toBe(volunteer.id);
+        // Check volunteer_id matches the registration's volunteer_id (not user id)
+        expect(updated.volunteer_id).toBe(registration.volunteer_id);
       });
 
       it('should support all valid status transitions', async () => {
@@ -718,11 +752,19 @@ describe('Volunteer Registrations CRUD - TDD', () => {
     it('should handle concurrent registrations for same volunteer', async () => {
       // Arrange
       const { app, pool } = context;
-      const volunteer = await createTestUser(pool);
-      const authToken = generateTestToken(volunteer.id, app);
+      const volunteerUser = await createTestUser(pool);
+      const authToken = generateTestToken(volunteerUser.id, app);
       const disasterArea = await createTestDisasterArea(pool);
       const grid1 = await createTestGrid(pool, disasterArea.id, { code: 'A-1' });
       const grid2 = await createTestGrid(pool, disasterArea.id, { code: 'A-2' });
+
+      // Create volunteer record
+      const { rows: volRows } = await pool.query(
+        `INSERT INTO volunteers (user_id, name, email, phone, status)
+         VALUES ($1, $2, $3, $4, 'available') RETURNING id`,
+        [volunteerUser.id, volunteerUser.display_name, volunteerUser.email, volunteerUser.phone]
+      );
+      const volunteerId = volRows[0].id;
 
       // Act - Register for two grids concurrently
       const [response1, response2] = await Promise.all([
@@ -732,7 +774,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid1.id,
-            volunteer_id: volunteer.id
+            volunteer_id: volunteerId
           }
         }),
         app.inject({
@@ -741,7 +783,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
           headers: { authorization: `Bearer ${authToken}` },
           payload: {
             grid_id: grid2.id,
-            volunteer_id: volunteer.id
+            volunteer_id: volunteerId
           }
         })
       ]);
@@ -754,10 +796,18 @@ describe('Volunteer Registrations CRUD - TDD', () => {
     it('should handle duplicate registration attempts', async () => {
       // Arrange
       const { app, pool } = context;
-      const volunteer = await createTestUser(pool);
-      const authToken = generateTestToken(volunteer.id, app);
+      const volunteerUser = await createTestUser(pool);
+      const authToken = generateTestToken(volunteerUser.id, app);
       const disasterArea = await createTestDisasterArea(pool);
       const grid = await createTestGrid(pool, disasterArea.id);
+
+      // Create volunteer record
+      const { rows: volRows } = await pool.query(
+        `INSERT INTO volunteers (user_id, name, email, phone, status)
+         VALUES ($1, $2, $3, $4, 'available') RETURNING id`,
+        [volunteerUser.id, volunteerUser.display_name, volunteerUser.email, volunteerUser.phone]
+      );
+      const volunteerId = volRows[0].id;
 
       // Create first registration
       const response1 = await app.inject({
@@ -766,7 +816,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         headers: { authorization: `Bearer ${authToken}` },
         payload: {
           grid_id: grid.id,
-          volunteer_id: volunteer.id
+          volunteer_id: volunteerId
         }
       });
 
@@ -779,7 +829,7 @@ describe('Volunteer Registrations CRUD - TDD', () => {
         headers: { authorization: `Bearer ${authToken}` },
         payload: {
           grid_id: grid.id,
-          volunteer_id: volunteer.id
+          volunteer_id: volunteerId
         }
       });
 

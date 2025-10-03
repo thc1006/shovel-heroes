@@ -16,6 +16,7 @@ import { registerAnnouncementRoutes } from './routes/announcements.js';
 import { registerSupplyDonationRoutes } from './routes/supply-donations.js';
 import { registerGridDiscussionRoutes } from './routes/grid-discussions.js';
 import { registerDebugRoutes } from './routes/debug.js';
+import authRoutes from './routes/auth.js';
 
 /**
  * Build Fastify application instance
@@ -191,6 +192,7 @@ export async function build(): Promise<FastifyInstance> {
 
   // Register all routes (type assertion needed due to logger type mismatch)
   registerHealth(app as any);
+  await app.register(authRoutes); // Auth routes with /auth prefix
   registerGrids(app as any);
   registerDisasterAreaRoutes(app as any);
   registerVolunteersRoutes(app as any);
