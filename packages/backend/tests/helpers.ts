@@ -57,12 +57,29 @@ export async function createTestApp(): Promise<TestContext> {
   // Decorate app with db pool
   app.decorate('db', pool);
 
-  // Auth decorator
+  // Global error handler - MUST be set BEFORE decorating auth
+  app.setErrorHandler((error, request, reply) => {
+    const statusCode = error.statusCode || 500;
+    reply.status(statusCode).send({
+      statusCode,
+      error: error.name || 'Error',
+      message: error.message,
+    });
+  });
+
+  // Auth decorator - matches production implementation exactly
   app.decorate('auth', async (req: any, reply: any) => {
     try {
       await req.jwtVerify();
-    } catch {
-      return reply.code(401).send({ error: 'unauthorized' });
+    } catch (err) {
+      // Send 401 and stop processing
+      reply.code(401).send({
+        statusCode: 401,
+        error: 'Unauthorized',
+        message: 'Invalid or expired authentication token',
+      });
+      // Return the reply to signal that the response was sent
+      return reply;
     }
   });
 
