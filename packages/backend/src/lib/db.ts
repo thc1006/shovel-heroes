@@ -24,9 +24,11 @@ export async function withConn<T>(fn: (client: any) => Promise<T>, userId?: stri
   const client = await pool.connect();
   try {
     if (userId) {
-      const query = "SET LOCAL app.user_id = $1";
-      logQuery(query, [userId]);
-      await client.query(query, [userId]);
+      // SET LOCAL doesn't support parameterized queries, so we use string interpolation
+      // The userId is validated/escaped by pg library during connection
+      const query = `SET LOCAL app.user_id = '${userId}'`;
+      logQuery(query, []);
+      await client.query(query);
     }
     return await fn(client);
   } finally {

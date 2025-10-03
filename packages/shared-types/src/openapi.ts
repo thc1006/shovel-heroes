@@ -4,6 +4,791 @@
  */
 
 export interface paths {
+    "/healthz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health check
+         * @description 檢查系統與資料庫健康狀態
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description System is healthy */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status?: "ok" | "degraded";
+                            /** @enum {string} */
+                            db?: "ok" | "fail";
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register new user
+         * @description 註冊新使用者 (志工/災民使用電話, 管理員使用電子郵件)
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RegisterRequest"];
+                };
+            };
+            responses: {
+                /** @description Registration successful */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** Format: uuid */
+                            userId?: string;
+                            role?: components["schemas"]["UserRole"];
+                            message?: string;
+                        };
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                /** @description User already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * User login
+         * @description 使用電話+OTP 或電子郵件+密碼登入
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LoginRequest"];
+                };
+            };
+            responses: {
+                /** @description Login successful */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AuthTokens"];
+                    };
+                };
+                /** @description Invalid credentials or OTP */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Account locked due to failed attempts */
+                423: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * User logout
+         * @description 登出並撤銷 session
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        token: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Logged out successfully */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh access token
+         * @description 使用 refresh token 更新 access token
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        refresh_token: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Token refreshed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            accessToken?: string;
+                            refreshToken?: string;
+                        };
+                    };
+                };
+                /** @description Invalid or expired refresh token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/request-otp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request OTP
+         * @description 請求發送 OTP 至電話號碼
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        phone_number: string;
+                        /** @enum {string} */
+                        purpose: "login" | "phone_verification";
+                    };
+                };
+            };
+            responses: {
+                /** @description OTP sent successfully */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/verify-otp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify OTP
+         * @description 驗證 OTP 碼
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        phone_number: string;
+                        otp: string;
+                        /** @enum {string} */
+                        purpose: "login" | "phone_verification";
+                    };
+                };
+            };
+            responses: {
+                /** @description OTP verification result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            valid?: boolean;
+                            message?: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List all users
+         * @description 取得所有使用者清單 (含篩選與分頁), 需要 coordinator 以上權限
+         */
+        get: {
+            parameters: {
+                query?: {
+                    page?: number;
+                    limit?: number;
+                    role?: components["schemas"]["UserRole"];
+                    status?: components["schemas"]["UserStatus"];
+                    search?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Users list with pagination */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            users?: {
+                                /** Format: uuid */
+                                user_id?: string;
+                                role?: components["schemas"]["UserRole"];
+                                email?: string;
+                                phone_number?: string;
+                                status?: components["schemas"]["UserStatus"];
+                                created_at?: components["schemas"]["Timestamp"];
+                            }[];
+                            pagination?: {
+                                page?: number;
+                                limit?: number;
+                                total?: number;
+                                totalPages?: number;
+                            };
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description Insufficient permissions */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user details
+         * @description 取得使用者詳細資訊
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description User details */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Delete user (soft delete)
+         * @description 軟刪除使用者 (僅 super_admin)
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description User deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                /** @description Requires super_admin role */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/users/{user_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update user status
+         * @description 更新使用者狀態 (suspend/activate)
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    user_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        status: components["schemas"]["UserStatus"];
+                        reason?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Status updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+            };
+        };
+        trace?: never;
+    };
+    "/admin/verify-victim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify victim identity
+         * @description 驗證災民身份與狀態
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        user_id: string;
+                        /** @enum {string} */
+                        action: "approve" | "reject" | "need_more_info";
+                        notes?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Verification processed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description User is not a victim */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: components["responses"]["NotFound"];
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/audit-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get audit logs
+         * @description 取得稽核日誌 (含篩選)
+         */
+        get: {
+            parameters: {
+                query?: {
+                    page?: number;
+                    limit?: number;
+                    user_id?: string;
+                    action?: string;
+                    start_date?: string;
+                    end_date?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Audit logs with pagination */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            logs?: components["schemas"]["AuditLog"][];
+                            pagination?: Record<string, never>;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/audit-logs/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export audit logs as CSV
+         * @description 匯出稽核日誌為 CSV 檔案
+         */
+        get: {
+            parameters: {
+                query?: {
+                    start_date?: string;
+                    end_date?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description CSV file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/csv": string;
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get dashboard statistics
+         * @description 取得管理後台統計資料
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dashboard statistics */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            users?: {
+                                total?: number;
+                                byRole?: {
+                                    role?: components["schemas"]["UserRole"];
+                                    count?: number;
+                                }[];
+                                byStatus?: {
+                                    status?: components["schemas"]["UserStatus"];
+                                    count?: number;
+                                }[];
+                                activeVolunteers?: number;
+                                pendingVerifications?: number;
+                                recentSignups?: number;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/recent-activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get recent activity feed
+         * @description 取得最近的活動記錄
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Recent activities */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/disaster-areas": {
         parameters: {
             query?: never;
@@ -186,11 +971,13 @@ export interface paths {
         };
         /**
          * List grids
-         * @description 取得全部網格 (可於未來加入篩選參數)。
+         * @description 取得全部網格 (可依災區篩選)。
          */
         get: {
             parameters: {
                 query?: {
+                    /** @description 篩選指定災區的網格 */
+                    area_id?: string;
                     /** @description 單頁筆數 (預設 50, 上限 200) */
                     limit?: components["parameters"]["PageLimit"];
                     /** @description 起始位移 (用於分頁) */
@@ -431,7 +1218,42 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Update volunteer registration status
+         * @description 更新志工報名狀態 (使用者只能更新自己的報名或管理員可更新任何報名)。
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        status: components["schemas"]["VolunteerStatus"];
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["VolunteerRegistration"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+            };
+        };
         post?: never;
         /**
          * Cancel volunteer registration
@@ -528,6 +1350,86 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supply-donations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update supply donation
+         * @description 更新物資捐贈紀錄 (狀態、數量、備註)。
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status?: "pending" | "confirmed" | "delivered";
+                        quantity?: number;
+                        notes?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SupplyDonation"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+            };
+        };
+        post?: never;
+        /**
+         * Delete supply donation
+         * @description 刪除物資捐贈紀錄。
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -669,6 +1571,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/announcements/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update announcement
+         * @description 更新公告內容。
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ID"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        title?: string;
+                        content?: string;
+                        /** @enum {string} */
+                        priority?: "low" | "normal" | "high" | "urgent";
+                        published?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Announcement"];
+                    };
+                };
+                400: components["responses"]["ValidationError"];
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+            };
+        };
+        post?: never;
+        /**
+         * Delete announcement
+         * @description 刪除公告。
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: components["schemas"]["ID"];
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                401: components["responses"]["Unauthorized"];
+                404: components["responses"]["NotFound"];
+                500: components["responses"]["InternalError"];
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/volunteers": {
         parameters: {
             query?: never;
@@ -678,11 +1661,25 @@ export interface paths {
         };
         /**
          * List volunteers
-         * @description 取得志工概觀或公開欄位。
+         * @description 取得志工報名清單（整合報名與使用者呈現所需欄位）。
+         *     回傳封裝含 `data` 與 `can_view_phone` 供前端判斷是否顯示電話。
+         *     欄位 `created_date` 目前沿用前端既有命名；若要統一建議改為 `created_at` 並同步前端。
+         *
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description 過濾指定網格的志工 */
+                    grid_id?: components["schemas"]["ID"];
+                    /** @description 過濾指定狀態 */
+                    status?: components["schemas"]["VolunteerStatus"];
+                    /** @description 是否回傳狀態統計 `status_counts` */
+                    include_counts?: boolean;
+                    /** @description 單頁筆數 (預設 50, 上限 200) */
+                    limit?: components["parameters"]["PageLimit"];
+                    /** @description 起始位移 (用於分頁) */
+                    offset?: components["parameters"]["PageOffset"];
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -694,7 +1691,9 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": components["schemas"]["VolunteersListResponse"];
+                    };
                 };
                 500: components["responses"]["InternalError"];
             };
@@ -1336,6 +2335,99 @@ export interface components {
              */
             email?: string;
         };
+        /**
+         * @description 志工報名狀態
+         * @example pending
+         * @enum {string}
+         */
+        VolunteerStatus: "pending" | "confirmed" | "arrived" | "completed" | "cancelled";
+        /** @description 志工報名清單中每一筆資料 (結合報名 + 呈現所需欄位) */
+        VolunteerListItem: {
+            id: components["schemas"]["ID"];
+            grid_id: components["schemas"]["ID"];
+            user_id: components["schemas"]["ID"];
+            /**
+             * @description 志工顯示名稱 (可能從使用者或表單輸入取得)
+             * @example 張小強
+             */
+            volunteer_name: string;
+            /**
+             * @description 志工電話號碼；若 `can_view_phone=false` 時後端可直接省略或回傳遮蔽版本
+             * @example 0912-345-678
+             */
+            volunteer_phone?: string | null;
+            status: components["schemas"]["VolunteerStatus"];
+            /**
+             * @description 可服務時間文字描述
+             * @example 10/3 上午或 10/4 全天
+             */
+            available_time?: string | null;
+            /**
+             * @description 自述技能 (字串列表)
+             * @example [
+             *       "挖土機",
+             *       "醫療志工"
+             *     ]
+             */
+            skills?: string[];
+            /**
+             * @description 可攜帶工具 (字串列表)
+             * @example [
+             *       "鐵鏟",
+             *       "手推車"
+             *     ]
+             */
+            equipment?: string[];
+            /**
+             * @description 其他備註
+             * @example 需要協助調度交通
+             */
+            notes?: string | null;
+            /**
+             * Format: date-time
+             * @description 報名建立時間 (命名沿用前端使用字段; 與其他資源的 created_at 不同)
+             * @example 2025-10-02T08:12:30Z
+             */
+            created_date: string;
+        };
+        /** @description 志工清單回應外層封裝 */
+        VolunteersListResponse: {
+            /** @description 志工報名資料陣列 */
+            data: components["schemas"]["VolunteerListItem"][];
+            /**
+             * @description 是否允許前端顯示 `volunteer_phone`；由後端依角色授權判斷
+             * @example true
+             */
+            can_view_phone: boolean;
+            /**
+             * @description 總筆數 (分頁時可用)
+             * @example 128
+             */
+            total?: number;
+            /** @description 各狀態統計 (若 `include_counts=true` 或後端預設回傳) */
+            status_counts?: {
+                /** @example 12 */
+                pending?: number;
+                /** @example 34 */
+                confirmed?: number;
+                /** @example 8 */
+                arrived?: number;
+                /** @example 55 */
+                completed?: number;
+                /** @example 19 */
+                cancelled?: number;
+            };
+            /**
+             * @description 目前頁碼 (可選, 若採用 page 模式)
+             * @example 1
+             */
+            page?: number;
+            /**
+             * @description 單頁筆數 (對應查詢參數)
+             * @example 50
+             */
+            limit?: number;
+        };
         Error: {
             /**
              * @description 錯誤訊息
@@ -1347,6 +2439,83 @@ export interface components {
              * @example AUTH_REQUIRED
              */
             code?: string;
+        };
+        /**
+         * @description 使用者角色
+         * @enum {string}
+         */
+        UserRole: "volunteer" | "victim" | "ngo_coordinator" | "regional_admin" | "data_analyst" | "super_admin";
+        /**
+         * @description 使用者狀態
+         * @enum {string}
+         */
+        UserStatus: "active" | "suspended" | "pending_verification" | "inactive";
+        RegisterRequest: {
+            /** @description 電話號碼 (志工/災民) */
+            phone_number?: string;
+            /**
+             * Format: email
+             * @description 電子郵件 (管理員)
+             */
+            email?: string;
+            /** @description 密碼 (管理員必填) */
+            password?: string;
+            role: components["schemas"]["UserRole"];
+            /** @description 全名 */
+            full_name: string;
+            /** @description 緊急聯絡人 */
+            emergency_contact?: string;
+        };
+        LoginRequest: {
+            /** @description 電話號碼 (OTP 登入) */
+            phone_number?: string;
+            /** @description OTP 驗證碼 */
+            otp?: string;
+            /**
+             * Format: email
+             * @description 電子郵件 (密碼登入)
+             */
+            email?: string;
+            /** @description 密碼 */
+            password?: string;
+        };
+        AuthTokens: {
+            /** @description JWT 存取權杖 (24小時有效) */
+            accessToken: string;
+            /** @description JWT 更新權杖 (7天有效) */
+            refreshToken: string;
+            user: {
+                /** Format: uuid */
+                id?: string;
+                role?: components["schemas"]["UserRole"];
+                email?: string;
+                phone_number?: string;
+            };
+        };
+        AuditLog: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            user_id?: string;
+            user_role?: components["schemas"]["UserRole"];
+            /**
+             * @description 操作類型
+             * @example UPDATE_USER_STATUS
+             */
+            action: string;
+            /**
+             * @description 資源類型
+             * @example users
+             */
+            resource_type?: string;
+            /** @description 資源 ID */
+            resource_id?: string | null;
+            ip_address?: string | null;
+            user_agent?: string | null;
+            request_data?: Record<string, never> | null;
+            old_value?: Record<string, never> | null;
+            new_value?: Record<string, never> | null;
+            created_at: components["schemas"]["Timestamp"];
         };
     };
     responses: {

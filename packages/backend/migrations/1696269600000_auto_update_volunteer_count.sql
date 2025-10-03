@@ -1,4 +1,4 @@
--- Migration: 自動更新網格志工人數
+-- Migration 0013: 自動更新網格志工人數
 -- Description: 當志工報名或取消時，自動增減 grids.volunteer_registered
 -- Created: 2025-10-02
 

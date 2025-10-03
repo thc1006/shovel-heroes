@@ -1,3 +1,17 @@
+/**
+ * Server Entry Point with OpenTelemetry
+ *
+ * IMPORTANT: OpenTelemetry MUST be initialized FIRST before any other imports
+ * to ensure all instrumentations work correctly.
+ */
+
+// Step 1: Initialize OpenTelemetry FIRST (before any other imports)
+import { initializeOTel } from './otel/init.js';
+
+// Initialize OTel - must be done before importing the app
+await initializeOTel();
+
+// Step 2: Now import application modules
 import { build, cleanup } from './app.js';
 import { env } from './lib/env.js';
 import { logger } from './lib/logger.js';
@@ -6,6 +20,10 @@ import { logger } from './lib/logger.js';
 async function shutdown(signal: string, app: any) {
   logger.info({ signal }, 'Shutting down gracefully...');
   try {
+    // Shutdown OpenTelemetry first
+    const { shutdownOTel } = await import('./otel/init.js');
+    await shutdownOTel();
+
     await cleanup(app);
     logger.info('Shutdown complete');
     process.exit(0);

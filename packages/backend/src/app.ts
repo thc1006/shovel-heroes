@@ -15,6 +15,7 @@ import { registerUserRoutes } from './routes/users.js';
 import { registerAnnouncementRoutes } from './routes/announcements.js';
 import { registerSupplyDonationRoutes } from './routes/supply-donations.js';
 import { registerGridDiscussionRoutes } from './routes/grid-discussions.js';
+import { registerDebugRoutes } from './routes/debug.js';
 
 /**
  * Build Fastify application instance
@@ -198,6 +199,9 @@ export async function build(): Promise<FastifyInstance> {
   registerAnnouncementRoutes(app as any);
   registerSupplyDonationRoutes(app as any);
   registerGridDiscussionRoutes(app as any);
+
+  // Debug routes (development only)
+  registerDebugRoutes(app as any);
 
   app.get('/', async () => ({ ok: true }));
 

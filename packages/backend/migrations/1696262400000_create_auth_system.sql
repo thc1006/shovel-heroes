@@ -1,6 +1,6 @@
 -- ============================================
--- 鏟子英雄 - 認證系統資料庫 Schema (FIXED)
--- Migration: 0007_create_auth_system_fixed
+-- 鏟子英雄 - 認證系統資料庫 Schema
+-- Migration: 0011_create_auth_system
 -- Created: 2025-10-02
 -- Description: ALTER existing users table + create auth tables
 -- ============================================

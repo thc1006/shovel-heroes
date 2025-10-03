@@ -1,11 +1,16 @@
 openapi: 3.1.0
 info:
   title: Shovel Heroes Public API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     REST endpoints replacing previous Base44 SDK usage.
-    This spec is inferred from the frontend code. Adjust field types and required properties to match your backend.
+    Comprehensive API documentation including authentication, admin panel, and all CRUD operations.
+    Last updated: 2025-10-03 - Added auth, admin, and missing CRUD endpoints.
 tags:
+  - name: Auth
+    description: 身份驗證與授權 (JWT + OTP + Session 管理)
+  - name: Admin
+    description: 管理後台 (使用者管理 / 稽核日誌 / RBAC)
   - name: DisasterAreas
     description: 災區相關查詢與維護
   - name: Grids
@@ -26,6 +31,8 @@ tags:
     description: 匯入匯出 / 後端批次或延伸功能
   - name: Legacy
     description: 與舊系統資料同步的 v2 相容端點
+  - name: Health
+    description: 系統健康檢查
 servers:
   - url: https://your.api.server
     description: Production
@@ -373,6 +380,121 @@ components:
           description: 內部錯誤代碼 (可選)
           example: AUTH_REQUIRED
       required: [message]
+    UserRole:
+      type: string
+      enum: [volunteer, victim, ngo_coordinator, regional_admin, data_analyst, super_admin]
+      description: 使用者角色
+    UserStatus:
+      type: string
+      enum: [active, suspended, pending_verification, inactive]
+      description: 使用者狀態
+    RegisterRequest:
+      type: object
+      properties:
+        phone_number:
+          type: string
+          pattern: '^[0-9]{10,15}$'
+          description: 電話號碼 (志工/災民)
+        email:
+          type: string
+          format: email
+          description: 電子郵件 (管理員)
+        password:
+          type: string
+          minLength: 8
+          description: 密碼 (管理員必填)
+        role:
+          $ref: '#/components/schemas/UserRole'
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: 全名
+        emergency_contact:
+          type: string
+          description: 緊急聯絡人
+      required: [role, full_name]
+    LoginRequest:
+      type: object
+      properties:
+        phone_number:
+          type: string
+          description: 電話號碼 (OTP 登入)
+        otp:
+          type: string
+          minLength: 6
+          maxLength: 6
+          description: OTP 驗證碼
+        email:
+          type: string
+          format: email
+          description: 電子郵件 (密碼登入)
+        password:
+          type: string
+          description: 密碼
+    AuthTokens:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          description: JWT 存取權杖 (24小時有效)
+        refreshToken:
+          type: string
+          description: JWT 更新權杖 (7天有效)
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            role:
+              $ref: '#/components/schemas/UserRole'
+            email:
+              type: string
+            phone_number:
+              type: string
+      required: [accessToken, refreshToken, user]
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        user_role:
+          $ref: '#/components/schemas/UserRole'
+        action:
+          type: string
+          description: 操作類型
+          example: UPDATE_USER_STATUS
+        resource_type:
+          type: string
+          description: 資源類型
+          example: users
+        resource_id:
+          type: string
+          nullable: true
+          description: 資源 ID
+        ip_address:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        request_data:
+          type: object
+          nullable: true
+        old_value:
+          type: object
+          nullable: true
+        new_value:
+          type: object
+          nullable: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+      required: [id, action, created_at]
   parameters:
     PageLimit:
       name: limit
@@ -419,6 +541,498 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
 paths:
+  /healthz:
+    get:
+      summary: Health check
+      description: 檢查系統與資料庫健康狀態
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  db:
+                    type: string
+                    enum: [ok, fail]
+  /auth/register:
+    post:
+      summary: Register new user
+      description: 註冊新使用者 (志工/災民使用電話, 管理員使用電子郵件)
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  userId:
+                    type: string
+                    format: uuid
+                  role:
+                    $ref: '#/components/schemas/UserRole'
+                  message:
+                    type: string
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/login:
+    post:
+      summary: User login
+      description: 使用電話+OTP 或電子郵件+密碼登入
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokens'
+        '401':
+          description: Invalid credentials or OTP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '423':
+          description: Account locked due to failed attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/logout:
+    post:
+      summary: User logout
+      description: 登出並撤銷 session
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required: [token]
+      responses:
+        '200':
+          description: Logged out successfully
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      description: 使用 refresh token 更新 access token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh_token:
+                  type: string
+              required: [refresh_token]
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                  refreshToken:
+                    type: string
+        '401':
+          description: Invalid or expired refresh token
+  /auth/request-otp:
+    post:
+      summary: Request OTP
+      description: 請求發送 OTP 至電話號碼
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone_number:
+                  type: string
+                  pattern: '^[0-9]{10,15}$'
+                purpose:
+                  type: string
+                  enum: [login, phone_verification]
+              required: [phone_number, purpose]
+      responses:
+        '200':
+          description: OTP sent successfully
+  /auth/verify-otp:
+    post:
+      summary: Verify OTP
+      description: 驗證 OTP 碼
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone_number:
+                  type: string
+                  pattern: '^[0-9]{10,15}$'
+                otp:
+                  type: string
+                  minLength: 6
+                  maxLength: 6
+                purpose:
+                  type: string
+                  enum: [login, phone_verification]
+              required: [phone_number, otp, purpose]
+      responses:
+        '200':
+          description: OTP verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  message:
+                    type: string
+  /admin/users:
+    get:
+      summary: List all users
+      description: 取得所有使用者清單 (含篩選與分頁), 需要 coordinator 以上權限
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: role
+          in: query
+          schema:
+            $ref: '#/components/schemas/UserRole'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/UserStatus'
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Users list with pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: string
+                          format: uuid
+                        role:
+                          $ref: '#/components/schemas/UserRole'
+                        email:
+                          type: string
+                        phone_number:
+                          type: string
+                        status:
+                          $ref: '#/components/schemas/UserStatus'
+                        created_at:
+                          $ref: '#/components/schemas/Timestamp'
+                  pagination:
+                    type: object
+                    properties:
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      total:
+                        type: integer
+                      totalPages:
+                        type: integer
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Insufficient permissions
+  /admin/users/{user_id}:
+    get:
+      summary: Get user details
+      description: 取得使用者詳細資訊
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User details
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Delete user (soft delete)
+      description: 軟刪除使用者 (僅 super_admin)
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Requires super_admin role
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/users/{user_id}/status:
+    patch:
+      summary: Update user status
+      description: 更新使用者狀態 (suspend/activate)
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  $ref: '#/components/schemas/UserStatus'
+                reason:
+                  type: string
+              required: [status]
+      responses:
+        '200':
+          description: Status updated
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/verify-victim:
+    post:
+      summary: Verify victim identity
+      description: 驗證災民身份與狀態
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+                action:
+                  type: string
+                  enum: [approve, reject, need_more_info]
+                notes:
+                  type: string
+              required: [user_id, action]
+      responses:
+        '200':
+          description: Verification processed
+        '400':
+          description: User is not a victim
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/audit-logs:
+    get:
+      summary: Get audit logs
+      description: 取得稽核日誌 (含篩選)
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: user_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Audit logs with pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLog'
+                  pagination:
+                    type: object
+  /admin/audit-logs/export:
+    get:
+      summary: Export audit logs as CSV
+      description: 匯出稽核日誌為 CSV 檔案
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+  /admin/stats:
+    get:
+      summary: Get dashboard statistics
+      description: 取得管理後台統計資料
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      byRole:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            role:
+                              $ref: '#/components/schemas/UserRole'
+                            count:
+                              type: integer
+                      byStatus:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            status:
+                              $ref: '#/components/schemas/UserStatus'
+                            count:
+                              type: integer
+                      activeVolunteers:
+                        type: integer
+                      pendingVerifications:
+                        type: integer
+                      recentSignups:
+                        type: integer
+  /admin/recent-activity:
+    get:
+      summary: Get recent activity feed
+      description: 取得最近的活動記錄
+      tags: [Admin]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Recent activities
   /disaster-areas:
     get:
       summary: List disaster areas
@@ -505,9 +1119,16 @@ paths:
   /grids:
     get:
       summary: List grids
-      description: 取得全部網格 (可於未來加入篩選參數)。
+      description: 取得全部網格 (可依災區篩選)。
       tags: [Grids]
       parameters:
+        - name: area_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: 篩選指定災區的網格
         - $ref: '#/components/parameters/PageLimit'
         - $ref: '#/components/parameters/PageOffset'
       responses:
@@ -611,6 +1232,36 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/InternalError' }
   /volunteer-registrations/{id}:
+    put:
+      summary: Update volunteer registration status
+      description: 更新志工報名狀態 (使用者只能更新自己的報名或管理員可更新任何報名)。
+      tags: [VolunteerRegistrations]
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  $ref: '#/components/schemas/VolunteerStatus'
+              required: [status]
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VolunteerRegistration' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
     delete:
       summary: Cancel volunteer registration
       description: 取消指定志工報名。
@@ -654,6 +1305,57 @@ paths:
         '201': { description: Created }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /supply-donations/{id}:
+    put:
+      summary: Update supply donation
+      description: 更新物資捐贈紀錄 (狀態、數量、備註)。
+      tags: [SupplyDonations]
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [pending, confirmed, delivered]
+                quantity:
+                  type: integer
+                  minimum: 1
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplyDonation' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      summary: Delete supply donation
+      description: 刪除物資捐贈紀錄。
+      tags: [SupplyDonations]
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
   /grid-discussions:
     get:
@@ -712,6 +1414,60 @@ paths:
         '201': { description: Created }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /announcements/{id}:
+    put:
+      summary: Update announcement
+      description: 更新公告內容。
+      tags: [Announcements]
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                content:
+                  type: string
+                  minLength: 1
+                priority:
+                  type: string
+                  enum: [low, normal, high, urgent]
+                published:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Announcement' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      summary: Delete announcement
+      description: 刪除公告。
+      tags: [Announcements]
+      security: [ { bearerAuth: [] } ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { $ref: '#/components/schemas/ID' }
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
   /volunteers:
     get:

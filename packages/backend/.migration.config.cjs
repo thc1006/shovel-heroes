@@ -15,10 +15,10 @@ module.exports = {
   // Migration table name
   migrationsTable: 'pgmigrations',
 
-  // Migration file naming
-  migrationFileLanguage: 'js',
+  // Migration file naming - SQL files
+  migrationFileLanguage: 'sql',
 
-  // TypeScript support (we'll use .js in migrations dir)
+  // TypeScript support (not used with SQL migrations)
   tsconfig: false,
 
   // Direction: up or down
@@ -49,6 +49,9 @@ module.exports = {
   decamelize: false,
 
   // Template for new migrations
-  'migration-file-language': 'js',
+  'migration-file-language': 'sql',
   'template-file-name': undefined,
+
+  // Ignore timestamp warnings for sequential-numbered migrations
+  ignorePattern: undefined,
 };

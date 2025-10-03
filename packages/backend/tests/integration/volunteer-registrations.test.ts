@@ -21,7 +21,7 @@ describe('PUT /volunteer-registrations/:id - Status Updates', () => {
 
     // Insert test users
     await context.pool.query(
-      'INSERT INTO users (id, email, name) VALUES ($1, $2, $3), ($4, $5, $6)',
+      'INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3), ($4, $5, $6)',
       [userId, 'user@test.com', 'Test User', adminId, 'admin@test.com', 'Admin User']
     );
 
@@ -94,7 +94,7 @@ describe('PUT /volunteer-registrations/:id - Status Updates', () => {
       // Create another user's registration
       const otherUserId = randomUUID();
       await context.pool.query(
-        'INSERT INTO users (id, email, name) VALUES ($1, $2, $3)',
+        'INSERT INTO users (id, email, display_name) VALUES ($1, $2, $3)',
         [otherUserId, 'other@test.com', 'Other User']
       );
 

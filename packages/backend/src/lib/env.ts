@@ -34,6 +34,11 @@ const envSchema = z.object({
   // Rate limiting (requests per minute per IP)
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   RATE_LIMIT_WINDOW: z.string().default('1 minute'),
+
+  // OpenTelemetry configuration
+  OTEL_ENABLED: z.string().default('true').transform((val) => val !== 'false'),
+  OTEL_SERVICE_NAME: z.string().default('shovel-heroes-api'),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

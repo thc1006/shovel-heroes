@@ -1,4 +1,4 @@
--- Migration 0007: Add UNIQUE constraint to grids.code
+-- Migration 0012: Add UNIQUE constraint to grids.code
 -- Generated: 2025-10-02
 -- Purpose: Ensure grid codes are unique for conflict detection
 

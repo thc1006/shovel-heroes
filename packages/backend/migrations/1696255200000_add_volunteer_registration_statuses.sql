@@ -39,15 +39,15 @@ CREATE TRIGGER volunteer_registrations_updated_at
 
 -- Add RLS policy for UPDATE operations
 -- Users can update their own registrations OR admins can update any
+-- Note: Simplified version without app.is_admin() function - will be added in auth migration
+DROP POLICY IF EXISTS volunteer_registrations_update_own ON volunteer_registrations;
 CREATE POLICY volunteer_registrations_update_own ON volunteer_registrations
   FOR UPDATE
   USING (
     volunteer_id IN (SELECT id FROM volunteers WHERE user_id = app.current_user_id())
-    OR app.is_admin()
   )
   WITH CHECK (
     volunteer_id IN (SELECT id FROM volunteers WHERE user_id = app.current_user_id())
-    OR app.is_admin()
   );
 
 -- Add comment for documentation

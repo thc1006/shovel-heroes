@@ -92,7 +92,25 @@ async function revokeUserSessions(userId: string) {
 // ============================================
 
 const adminRoutes: FastifyPluginAsync = async (app) => {
-  // All routes require coordinator or higher
+  // First, verify JWT token for all admin routes
+  app.addHook('onRequest', async (request, reply) => {
+    try {
+      await request.jwtVerify();
+    } catch (err) {
+      logSecurityEvent('jwt_verification_failed', {
+        ip: request.ip,
+        url: request.url,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+      return reply.code(401).send({
+        statusCode: 401,
+        error: 'Unauthorized',
+        message: 'Invalid or expired authentication token',
+      });
+    }
+  });
+
+  // Then, enforce role-based access (coordinator or higher)
   app.addHook('onRequest', requireRole(['ngo_coordinator', 'regional_admin', 'super_admin']));
 
   /**
@@ -134,7 +152,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (query.search) {
-      conditions.push(`(full_name ILIKE $${paramIndex} OR email ILIKE $${paramIndex} OR phone_number ILIKE $${paramIndex})`);
+      conditions.push(`(email ILIKE $${paramIndex} OR phone_number ILIKE $${paramIndex})`);
       params.push(`%${query.search}%`);
       paramIndex++;
     }
@@ -151,7 +169,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     // Get users
     params.push(query.limit, offset);
     const result = await pool.query(`
-      SELECT user_id, role, full_name, email, phone_number, status,
+      SELECT id as user_id, role, email, phone_number, status,
              phone_verified, email_verified, created_at, updated_at
       FROM users
       ${whereClause}
@@ -202,11 +220,11 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     const params = userIdParamSchema.parse(request.params);
 
     const result = await pool.query(`
-      SELECT user_id, role, full_name, email, phone_number, status,
-             phone_verified, email_verified, emergency_contact,
+      SELECT id as user_id, role, email, phone_number, status,
+             phone_verified, email_verified,
              created_at, updated_at
       FROM users
-      WHERE user_id = $1
+      WHERE id = $1
     `, [params.user_id]);
 
     if (result.rows.length === 0) {
@@ -257,7 +275,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
     // Get current user data
     const userResult = await pool.query(
-      'SELECT status FROM users WHERE user_id = $1',
+      'SELECT status FROM users WHERE id = $1',
       [params.user_id]
     );
 
@@ -269,7 +287,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
     // Update status
     await pool.query(
-      'UPDATE users SET status = $1, updated_at = NOW() WHERE user_id = $2',
+      'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2',
       [body.status, params.user_id]
     );
 
@@ -330,7 +348,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
     // Check if user is a victim
     const userResult = await pool.query(
-      'SELECT role, status FROM users WHERE user_id = $1',
+      'SELECT role, status FROM users WHERE id = $1',
       [body.user_id]
     );
 
@@ -357,7 +375,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     }
 
     await pool.query(
-      'UPDATE users SET status = $1, updated_at = NOW() WHERE user_id = $2',
+      'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2',
       [newStatus, body.user_id]
     );
 
@@ -450,7 +468,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     // Get logs
     params.push(query.limit, offset);
     const result = await pool.query(`
-      SELECT log_id, user_id, user_role, action, resource_type, resource_id,
+      SELECT id as log_id, user_id, user_role, action, resource_type, resource_id,
              ip_address, user_agent, request_data, old_value, new_value, created_at
       FROM audit_logs
       ${whereClause}
@@ -490,7 +508,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     const params = userIdParamSchema.parse(request.params);
 
     const userResult = await pool.query(
-      'SELECT user_id, role FROM users WHERE user_id = $1',
+      'SELECT id as user_id, role FROM users WHERE id = $1',
       [params.user_id]
     );
 
@@ -500,7 +518,7 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
 
     // Soft delete by setting status to inactive
     await pool.query(
-      'UPDATE users SET status = $1, updated_at = NOW() WHERE user_id = $2',
+      'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2',
       ['inactive', params.user_id]
     );
 
@@ -528,6 +546,226 @@ const adminRoutes: FastifyPluginAsync = async (app) => {
     });
 
     return reply.send({ message: 'User deleted successfully' });
+  });
+
+  /**
+   * GET /admin/stats
+   * Get dashboard statistics
+   */
+  app.get('/admin/stats', async (request, reply) => {
+    // Get user counts by role
+    const roleStats = await pool.query(`
+      SELECT role, COUNT(*) as count
+      FROM users
+      GROUP BY role
+      ORDER BY count DESC
+    `);
+
+    // Get user counts by status
+    const statusStats = await pool.query(`
+      SELECT status, COUNT(*) as count
+      FROM users
+      GROUP BY status
+    `);
+
+    // Get total users
+    const totalUsers = await pool.query(`
+      SELECT COUNT(*) as total FROM users
+    `);
+
+    // Get active volunteers (status = active AND role = volunteer)
+    const activeVolunteers = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM users
+      WHERE role = 'volunteer' AND status = 'active'
+    `);
+
+    // Get pending verifications
+    const pendingVerifications = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM users
+      WHERE status = 'pending_verification'
+    `);
+
+    // Get recent signups (last 7 days)
+    const recentSignups = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM users
+      WHERE created_at > NOW() - INTERVAL '7 days'
+    `);
+
+    // Get audit log counts by action (last 30 days)
+    const auditStats = await pool.query(`
+      SELECT action, COUNT(*) as count
+      FROM audit_logs
+      WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY action
+      ORDER BY count DESC
+      LIMIT 10
+    `);
+
+    return reply.send({
+      users: {
+        total: parseInt(totalUsers.rows[0].total),
+        byRole: roleStats.rows,
+        byStatus: statusStats.rows,
+        activeVolunteers: parseInt(activeVolunteers.rows[0].count),
+        pendingVerifications: parseInt(pendingVerifications.rows[0].count),
+        recentSignups: parseInt(recentSignups.rows[0].count),
+      },
+      auditActivity: auditStats.rows,
+    });
+  });
+
+  /**
+   * GET /admin/recent-activity
+   * Get recent activity feed
+   */
+  app.get('/admin/recent-activity', async (request, reply) => {
+    const query = z.object({
+      limit: z.coerce.number().int().min(1).max(100).default(20),
+    }).parse(request.query);
+
+    // Get recent audit logs with user information
+    const activities = await pool.query(`
+      SELECT
+        al.id,
+        al.action,
+        al.resource_type,
+        al.resource_id,
+        al.user_id,
+        al.user_role,
+        al.ip_address,
+        al.created_at,
+        al.request_method,
+        al.request_path,
+        al.response_status
+      FROM audit_logs al
+      ORDER BY al.created_at DESC
+      LIMIT $1
+    `, [query.limit]);
+
+    return reply.send({
+      activities: activities.rows,
+    });
+  });
+
+  /**
+   * GET /admin/audit-logs/export
+   * Export audit logs as CSV
+   */
+  app.get('/admin/audit-logs/export', async (request, reply) => {
+    const query = z.object({
+      start_date: z.string().datetime().optional(),
+      end_date: z.string().datetime().optional(),
+      action: z.string().optional(),
+      user_id: z.string().uuid().optional(),
+    }).parse(request.query);
+
+    // Build dynamic WHERE clause
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let paramIndex = 1;
+
+    if (query.user_id) {
+      conditions.push(`user_id = $${paramIndex++}`);
+      params.push(query.user_id);
+    }
+
+    if (query.action) {
+      conditions.push(`action = $${paramIndex++}`);
+      params.push(query.action);
+    }
+
+    if (query.start_date) {
+      conditions.push(`created_at >= $${paramIndex++}`);
+      params.push(query.start_date);
+    }
+
+    if (query.end_date) {
+      conditions.push(`created_at <= $${paramIndex++}`);
+      params.push(query.end_date);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get all matching logs
+    const result = await pool.query(`
+      SELECT
+        id,
+        user_id,
+        user_role,
+        action,
+        resource_type,
+        resource_id,
+        ip_address,
+        user_agent,
+        request_method,
+        request_path,
+        response_status,
+        is_suspicious,
+        risk_level,
+        created_at
+      FROM audit_logs
+      ${whereClause}
+      ORDER BY created_at DESC
+    `, params);
+
+    // Generate CSV
+    const csvHeaders = [
+      'ID',
+      'User ID',
+      'User Role',
+      'Action',
+      'Resource Type',
+      'Resource ID',
+      'IP Address',
+      'User Agent',
+      'Request Method',
+      'Request Path',
+      'Response Status',
+      'Is Suspicious',
+      'Risk Level',
+      'Created At',
+    ];
+
+    const csvRows = result.rows.map(row => [
+      row.id,
+      row.user_id || '',
+      row.user_role || '',
+      row.action,
+      row.resource_type || '',
+      row.resource_id || '',
+      row.ip_address || '',
+      row.user_agent || '',
+      row.request_method || '',
+      row.request_path || '',
+      row.response_status || '',
+      row.is_suspicious ? 'true' : 'false',
+      row.risk_level || '',
+      row.created_at,
+    ]);
+
+    // Escape CSV values
+    const escapeCsvValue = (value: any): string => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const csv = [
+      csvHeaders.map(escapeCsvValue).join(','),
+      ...csvRows.map(row => row.map(escapeCsvValue).join(',')),
+    ].join('\n');
+
+    // Set headers for CSV download
+    reply.header('Content-Type', 'text/csv; charset=utf-8');
+    reply.header('Content-Disposition', `attachment; filename="audit_logs_${new Date().toISOString().split('T')[0]}.csv"`);
+
+    return reply.send(csv);
   });
 };
 

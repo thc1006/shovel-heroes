@@ -169,8 +169,8 @@ export function requireRole(allowedRoles: string[]): preHandlerHookHandler {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SET LOCAL app.user_id = $1', [userId]);
-        await client.query('SET LOCAL app.user_role = $1', [user.role]);
+        await client.query(`SET LOCAL app.user_id = '${userId.replace(/'/g, "''")}'`);
+        await client.query(`SET LOCAL app.user_role = '${user.role.replace(/'/g, "''")}'`);
 
         // Store client in request for transaction support
         (request as any).dbClient = client;
@@ -464,7 +464,7 @@ export async function setRLSContext(userId: string, userRole?: string): Promise<
 
   try {
     await client.query('BEGIN');
-    await client.query('SET LOCAL app.user_id = $1', [userId]);
+    await client.query(`SET LOCAL app.user_id = '${userId.replace(/'/g, "''")}'`);
 
     // Fetch role if not provided
     if (!userRole) {
@@ -476,7 +476,7 @@ export async function setRLSContext(userId: string, userRole?: string): Promise<
     }
 
     if (userRole) {
-      await client.query('SET LOCAL app.user_role = $1', [userRole]);
+      await client.query(`SET LOCAL app.user_role = '${userRole.replace(/'/g, "''")}'`);
     }
 
     await client.query('COMMIT');

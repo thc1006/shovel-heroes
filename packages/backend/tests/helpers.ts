@@ -100,16 +100,19 @@ export function generateTestToken(userId: string, app: FastifyInstance): string 
 
 /**
  * Clean all test data from database tables
+ * Order matters: delete child tables before parent tables to avoid FK constraint violations
  */
 export async function cleanDatabase(pool: Pool): Promise<void> {
   const tables = [
-    'grid_discussions',
-    'supply_donations',
-    'announcements',
-    'volunteer_registrations',
-    'grids',
-    'disaster_areas',
-    'users'
+    // Delete from child tables first (those with foreign keys)
+    'volunteer_registrations',  // References: volunteers, grids, disaster_areas
+    'grid_discussions',         // References: grids, users
+    'supply_donations',         // References: grids, disaster_areas
+    'announcements',            // References: disaster_areas
+    'volunteers',               // References: users (NEW - added this)
+    'grids',                    // References: disaster_areas, users (manager_id)
+    'disaster_areas',           // No references
+    'users'                     // Parent table, deleted last
   ];
 
   for (const table of tables) {
@@ -122,13 +125,13 @@ export async function cleanDatabase(pool: Pool): Promise<void> {
  */
 export async function createTestUser(pool: Pool, data?: Partial<{ id: string; name: string; email: string; phone: string }>): Promise<any> {
   const id = data?.id || randomUUID();
-  const name = data?.name || 'Test User';
+  const display_name = data?.name || 'Test User';
   const email = data?.email || `test-${id.substring(0, 8)}@example.com`;
-  const phone = data?.phone || null;
+  const phone_number = data?.phone || null;
 
   const { rows } = await pool.query(
-    `INSERT INTO users (id, name, email, phone) VALUES ($1, $2, $3, $4) RETURNING *`,
-    [id, name, email, phone]
+    `INSERT INTO users (id, display_name, email, phone_number) VALUES ($1, $2, $3, $4) RETURNING id, display_name, display_name as name, email, phone_number, phone_number as phone`,
+    [id, display_name, email, phone_number]
   );
 
   return rows[0];
@@ -137,15 +140,15 @@ export async function createTestUser(pool: Pool, data?: Partial<{ id: string; na
 /**
  * Create a test disaster area
  */
-export async function createTestDisasterArea(pool: Pool, data?: Partial<{ id: string; name: string; center_lat: number; center_lng: number }>): Promise<any> {
+export async function createTestDisasterArea(pool: Pool, data?: Partial<{ id: string; name: string; description?: string; location?: string }>): Promise<any> {
   const id = data?.id || randomUUID();
   const name = data?.name || 'Test Disaster Area';
-  const center_lat = data?.center_lat || 25.0330;
-  const center_lng = data?.center_lng || 121.5654;
+  const description = data?.description || 'Test disaster area description';
+  const location = data?.location || 'Test Location';
 
   const { rows } = await pool.query(
-    `INSERT INTO disaster_areas (id, name, center_lat, center_lng) VALUES ($1, $2, $3, $4) RETURNING *`,
-    [id, name, center_lat, center_lng]
+    `INSERT INTO disaster_areas (id, name, description, location) VALUES ($1, $2, $3, $4) RETURNING *`,
+    [id, name, description, location]
   );
 
   return rows[0];
@@ -169,13 +172,54 @@ export async function createTestGrid(pool: Pool, disasterAreaId: string, data?: 
 
 /**
  * Create a test volunteer registration
+ * Note: userId should be the user's ID. This function will create/get the volunteer record automatically.
  */
-export async function createTestVolunteerRegistration(pool: Pool, gridId: string, userId: string): Promise<any> {
+export async function createTestVolunteerRegistration(pool: Pool, gridId: string, userId: string, overrides: any = {}): Promise<any> {
   const id = randomUUID();
 
+  // First, ensure the user has a volunteer record
+  let volunteerId = overrides.volunteer_id;
+
+  if (!volunteerId) {
+    // Check if user already has a volunteer record
+    const { rows: existingVolunteers } = await pool.query(
+      'SELECT id FROM volunteers WHERE user_id = $1',
+      [userId]
+    );
+
+    if (existingVolunteers.length > 0) {
+      volunteerId = existingVolunteers[0].id;
+    } else {
+      // Create a volunteer record for this user
+      const { rows: newVolunteers } = await pool.query(
+        `INSERT INTO volunteers (id, user_id, name, email, phone, status)
+         VALUES (gen_random_uuid(), $1, 'Test Volunteer', $2, '0912-345-678', 'available')
+         RETURNING id`,
+        [userId, `volunteer-${userId}@example.com`]
+      );
+      volunteerId = newVolunteers[0].id;
+    }
+  }
+
+  // Now create the volunteer registration with the volunteer_id
   const { rows } = await pool.query(
-    `INSERT INTO volunteer_registrations (id, grid_id, user_id) VALUES ($1, $2, $3) RETURNING *`,
-    [id, gridId, userId]
+    `INSERT INTO volunteer_registrations (
+      id, volunteer_id, grid_id, disaster_area_id, status, notes,
+      volunteer_name, volunteer_phone, available_time, skills, equipment
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    [
+      id,
+      volunteerId,
+      gridId,
+      overrides.disaster_area_id || null,
+      overrides.status || 'pending',
+      overrides.notes || null,
+      overrides.volunteer_name || 'Test Volunteer',
+      overrides.volunteer_phone || '0912-345-678',
+      overrides.available_time || null,
+      overrides.skills || null,
+      overrides.equipment || null
+    ]
   );
 
   return rows[0];
@@ -187,7 +231,8 @@ export async function createTestVolunteerRegistration(pool: Pool, gridId: string
 export async function withUserId<T>(pool: Pool, userId: string, fn: (client: any) => Promise<T>): Promise<T> {
   const client = await pool.connect();
   try {
-    await client.query('SET LOCAL app.user_id = $1', [userId]);
+    // PostgreSQL SET LOCAL doesn't support parameterized queries
+    await client.query(`SET LOCAL app.user_id = '${userId}'`);
     return await fn(client);
   } finally {
     client.release();
@@ -200,8 +245,10 @@ export async function withUserId<T>(pool: Pool, userId: string, fn: (client: any
 export const mockData = {
   user: (overrides?: any) => ({
     id: randomUUID(),
+    display_name: 'Mock User',
     name: 'Mock User',
     email: `mock-${Date.now()}@example.com`,
+    phone_number: '0912345678',
     phone: '0912345678',
     ...overrides
   }),
